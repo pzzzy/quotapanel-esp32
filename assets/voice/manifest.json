@@ -1,0 +1,42 @@
+{
+  "primary": {
+    "text": "Primary account.",
+    "seconds": 1.196,
+    "sha256": "0085f0c47d99f500984fb6fcbef3dd21684208f01f86751b7cd0f02a3a627d9e"
+  },
+  "secondary": {
+    "text": "Secondary account.",
+    "seconds": 1.312,
+    "sha256": "a24143c2d0a393e43883da38486ea350ae156c394201bb446041063fdef9479b"
+  },
+  "exhausted": {
+    "text": "Usage exhausted.",
+    "seconds": 1.265,
+    "sha256": "e6361d58612e36edd9d93e81a6989d36c29c969eb20d2d17d35b28b9c0a29573"
+  },
+  "reset": {
+    "text": "Usage allowance reset.",
+    "seconds": 1.521,
+    "sha256": "92cd7cc2f67b592bed874666e5af625238d56584e5882903468b3db4af1f6d5f"
+  },
+  "banked_used": {
+    "text": "Banked reset used.",
+    "seconds": 1.265,
+    "sha256": "01ec4fbf20a4950766e044e85549b4bec74eb988acf14c3b60be48fd0b6384e9"
+  },
+  "banked_gained": {
+    "text": "Banked reset gained.",
+    "seconds": 1.231,
+    "sha256": "d45d3a6f05aa1b715f9b31dee138b9126fe9da06fbd70c7b3f8e33baab988c76"
+  },
+  "warning_10": {
+    "text": "Warning. Ten percent or less of your allowance remains.",
+    "seconds": 3.146,
+    "sha256": "86351e66969b64947eacda83e5c64d35e19d24124e00f76870601e286d1ddc0e"
+  },
+  "warning_5": {
+    "text": "Warning. Five percent or less of your allowance remains.",
+    "seconds": 3.32,
+    "sha256": "ca4b192ef3cd0cf5f5996fafd3e36ecd92ff2dacb266d7dfe847d6de937da082"
+  }
+}

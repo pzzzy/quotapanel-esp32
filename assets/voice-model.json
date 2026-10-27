@@ -1,0 +1,11 @@
+{
+  "repository": "rhasspy/piper-voices",
+  "revision": "5041a7a49ae5b3a0f30e6837769eb03fdbb231bd",
+  "path": "en/en_US/ljspeech/medium",
+  "model": "en_US-ljspeech-medium.onnx",
+  "modelSha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22",
+  "configSha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860",
+  "modelLicense": "MIT (repository metadata)",
+  "datasetLicense": "Public domain in the United States; see the LJ Speech dataset terms",
+  "generator": "piper-tts 1.8.0"
+}

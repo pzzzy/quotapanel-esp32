@@ -1,0 +1,6 @@
+# QuotaPanel ESP32: 16 MiB flash, factory app, independent credentials and history.
+# Name,   Type, SubType, Offset,   Size
+nvs,      data, nvs,     0x9000,   0x5000
+factory,  app,  factory, 0x10000,  0x200000
+accounts, data, nvs,     0x210000, 0x10000
+history,  data, 0x40,    0x220000, 0x10000

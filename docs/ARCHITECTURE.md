@@ -1,0 +1,46 @@
+# Architecture and estimation
+
+```mermaid
+flowchart LR
+  Browser[Browser: initial login] --> USB[Loopback callback + USB setup]
+  USB --> Board[ESP32: PKCE exchange and token storage]
+  Board -->|verified HTTPS| Auth[OpenAI OAuth refresh]
+  Board -->|verified HTTPS, ~30 seconds| Usage[Account usage and reset-credit endpoints]
+  Usage --> Board
+  Board --> History[Local history journal]
+  History --> Forecast[Quota runway estimator]
+  Forecast --> Display[Display and offline voice alerts]
+```
+
+There is no runtime bridge or hosted application. A FreeRTOS worker serializes account network operations and authentication commands. The display remains responsive while it runs. A normal cycle fetches usage and reset-credit data for each account. Failures use bounded exponential backoff and honor Retry-After. On-screen freshness matters: a live countdown does not mean the server reading is new.
+
+## Authentication and storage
+
+TLS certificate chains, hostname and validity are checked using embedded ISRG roots. The clock is synchronized before HTTPS. The OAuth flow uses PKCE S256 and random state with the public Codex native client, a fixed loopback callback, and board-owned refresh tokens. Browser setup does not read a local Codex profile. Tokens and Wi-Fi settings are in unencrypted NVS; see SECURITY.md.
+
+Refresh runs before token expiry or after an HTTP 401. Before submitting a rotating refresh token, the firmware records a pending marker. A crash or ambiguous outcome causes reauthorization instead of reusing an uncertain token. This trades availability for avoiding destructive rotation retries.
+
+Flash layout: settings NVS at 0x9000 (20 KiB), factory application at 0x10000 (2 MiB), accounts NVS at 0x210000 (64 KiB), history at 0x220000 (64 KiB). The remainder of 16 MiB is unused by this application. Updating those application regions does not scrub old data elsewhere. There is no OTA partition in this alpha.
+
+The journal uses fixed-size records, checksums, readback verification, and periodic checkpoints plus significant changes. Its checksum detects accidental corruption, not tampering. Warning baselines persist separately. Fine-grained live history uses PSRAM; the forecast considers at most 24 hours.
+
+## Runway estimate
+
+The model measures allowance percentage points, not tokens or money. Each allowance window is tracked independently for each account and reset epoch. The earliest relevant limiting window determines the account summary.
+
+1. Reject invalid readings, deduplicate timestamps, and restrict history to the last 24 hours.
+2. Start a fresh segment after a decrease in used allowance, a reset/correction, or an unobserved gap over 10 minutes. A latest reading older than 90 seconds is stale.
+3. Require at least 10 minutes and two percentage points of observed consumption. An hour with less than one point consumed is reported as no recent burn.
+4. Estimate rates over 15 minutes, 1 hour, 6 hours and 24 hours, weighted 55%, 30%, 10%, 5%. Down-weight incomplete windows and small changes; avoid duplicate baselines.
+5. Divide remaining allowance by the weighted rate. Bound the result using disagreement between horizons and a one-point endpoint quantization allowance. Bounds are sensitivity ranges, not statistical confidence intervals.
+6. Confidence rises only with longer history, more consumed allowance, agreement between rates, and a forecast not too far beyond the observed history. Compare the range and point estimate with the scheduled reset to indicate when a reset may arrive first.
+
+This responds to a new workload faster than a lifetime average without pretending that quantized quota reports are precise telemetry. It cannot predict future workload choices, changed server limits, or credits-to-usage conversion. Credits and banked resets are shown separately, not added to the runway. Accuracy has been checked through deterministic cases and C++/Python parity, not a calibrated real-world forecasting study.
+
+## Alerts and bank expiration
+
+Thresholds trigger on crossing 10% or 5%, with per-window latches that rearm for a new allowance cycle. A jump past both announces the more urgent threshold. Exhaustion, reset and bank events take precedence as appropriate. Startup observations establish a baseline instead of treating every existing state as a new event.
+
+A bank-count decrease alone can mean expiration. A 'banked reset used' alert requires a correlated allowance restoration and is suppressed when the previously known expiration has passed. Gains and reset changes are detected from successive observations. These are conservative inferences, not a server event stream. Earliest expiration is the minimum usable expiration returned by the reset-credit endpoint; unknown values remain unknown.
+
+Speech clips and chimes are local. The ES8311 adapter configures output only; no microphone or cloud speech service is used.

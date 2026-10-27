@@ -1,0 +1,2 @@
+# Optional asset regeneration only; not used by the display or normal setup.
+piper-tts==1.8.0

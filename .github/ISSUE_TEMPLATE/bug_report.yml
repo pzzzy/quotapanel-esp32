@@ -1,0 +1,22 @@
+name: Bug report
+description: Report a reproducible firmware or setup issue.
+body:
+  - type: markdown
+    attributes:
+      value: 'Do not attach credentials, account IDs, real usage data, authorization links, full-flash backups or NVS dumps. For vulnerabilities use private security reporting.'
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version and board variant
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps, expected behavior and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics or synthetic example

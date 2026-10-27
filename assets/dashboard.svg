@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+<title id="title">QuotaPanel ESP32 illustrative dashboard</title><desc id="desc">Synthetic readings for two accounts with allowance, credits, banked resets and forecast. This is an illustration, not a real account screenshot.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#091827"/><stop offset="1" stop-color="#102d3a"/></linearGradient><filter id="shadow"><feDropShadow dx="0" dy="12" stdDeviation="18" flood-opacity=".35"/></filter></defs>
+<rect width="960" height="600" rx="24" fill="url(#bg)"/>
+<g font-family="system-ui, sans-serif"><text x="60" y="64" fill="#eefbff" font-size="30" font-weight="700" letter-spacing="3">QUOTAPANEL</text><text x="900" y="62" text-anchor="end" fill="#67e8b3" font-size="16">ESP32 · DIRECT</text>
+<g filter="url(#shadow)"><rect x="50" y="98" width="420" height="360" rx="20" fill="#152c3b" stroke="#294456"/><rect x="490" y="98" width="420" height="360" rx="20" fill="#152c3b" stroke="#294456"/></g>
+<g fill="#9db7c8" font-size="17" letter-spacing="2"><text x="78" y="139">PRIMARY</text><text x="518" y="139">SECONDARY</text></g>
+<g font-size="76" font-weight="650"><text x="76" y="224" fill="#67e8b3">72<tspan font-size="32">%</tspan></text><text x="516" y="224" fill="#f5c96b">18<tspan font-size="32">%</tspan></text></g>
+<g fill="#c5d5df" font-size="17"><text x="78" y="251">allowance remaining</text><text x="518" y="251">allowance remaining</text></g>
+<rect x="78" y="274" width="364" height="8" rx="4" fill="#294456"/><rect x="78" y="274" width="262" height="8" rx="4" fill="#67e8b3"/><rect x="518" y="274" width="364" height="8" rx="4" fill="#294456"/><rect x="518" y="274" width="66" height="8" rx="4" fill="#f5c96b"/>
+<g fill="#9db7c8" font-size="16"><text x="78" y="320">EST. RUNWAY</text><text x="518" y="320">EST. RUNWAY</text></g><g fill="#eefbff" font-size="27" font-weight="600"><text x="78" y="354">~ 6h 20m</text><text x="518" y="354">~ 1h 10m</text></g>
+<g fill="#c5d5df" font-size="16"><text x="78" y="391">Credits 120  ·  Banked resets 2</text><text x="518" y="391">Credits 40  ·  Banked resets 1</text><text x="78" y="424">Resets in 2h 48m</text><text x="518" y="424">Earliest expiry: Nov 6</text></g>
+<circle cx="66" cy="501" r="5" fill="#67e8b3"/><text x="82" y="507" fill="#c5d5df" font-size="16">Standalone Wi-Fi · Local voice alerts · Usage-aware forecasts</text><text x="480" y="562" text-anchor="middle" fill="#718fa4" font-size="13" letter-spacing="1">ILLUSTRATION · SIMULATED DATA · PHYSICAL DISPLAY 320 × 240</text></g></svg>
