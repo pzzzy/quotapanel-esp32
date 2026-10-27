@@ -15,11 +15,18 @@ def main():
     build = ROOT / "firmware/.pio/build/quotapanel-esp32"
     out = args.output
     out.mkdir(parents=True, exist_ok=True)
+    try:
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        revision = "v0.1.0-alpha.1"
     meta = {
         "project": "QuotaPanel ESP32",
         "version": "0.1.0-alpha.1",
         "chip": "esp32s3",
         "flashBytes": 16777216,
+        "sourceRevision": revision,
         "files": {},
     }
     for name, offset in [
@@ -41,7 +48,7 @@ def main():
     shutil.copy2(ROOT / "LICENSE", out / "LICENSE")
     shutil.copytree(ROOT / "licenses", out / "licenses", dirs_exist_ok=True)
     (out / "SOURCE.txt").write_text(
-        "Complete project source, build instructions and dependency versions: https://github.com/pzzzy/quotapanel-esp32\nSee docs/BUILD.md and licenses/NOTICE.md. No secure boot or flashing restriction is imposed.\n"
+        f"Project source: https://github.com/pzzzy/quotapanel-esp32/tree/{revision}\nDependency source: dependencies-source.tar.gz alongside this release.\nSee docs/BUILD.md and licenses/NOTICE.md. No secure boot or flashing restriction is imposed.\n"
     )
     print(out)
 
