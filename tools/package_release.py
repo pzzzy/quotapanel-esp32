@@ -35,6 +35,13 @@ def main():
         ("firmware.bin", 0x10000),
     ]:
         data = (build / name).read_bytes()
+        # Precompiled Espressif newlib archives retain their upstream public
+        # builder paths. Reject this build machine's paths; never patch binaries.
+        for private_path in (Path.home(), ROOT):
+            if (str(private_path) + "/").encode() in data:
+                raise RuntimeError(
+                    "Local build path in " + name + "; check path remapping"
+                )
         (out / name).write_bytes(data)
         meta["files"][name] = {
             "offset": offset,

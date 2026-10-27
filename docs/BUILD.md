@@ -25,7 +25,7 @@ The output is `dist/firmware`. Package only bootloader.bin, partitions.bin and f
 
 The checked-in PCM header is the firmware input. Optional voice regeneration requires `requirements-voices.txt` and the exact model/config hashes in `assets/voice-model.json`; see assets/README.md. Normal builds do not download a speech model.
 
-CI runs host tests, a clean firmware build, asset checks and release packaging. Build paths/timestamps and toolchain host differences may prevent byte-for-byte identity; checksums identify a particular artifact, not an unproven reproducible-build guarantee.
+CI runs host tests, a clean firmware build, asset checks and release packaging. Local compiler paths are remapped before compilation and checked when packaging. Precompiled toolchain libraries can retain their upstream public builder paths. Timestamps and toolchain host differences may prevent byte-for-byte identity; checksums identify a particular artifact, not an unproven reproducible-build guarantee.
 
 ## Corresponding source
 
