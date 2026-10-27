@@ -6,8 +6,10 @@
 
 - Standalone precursor: independent browser OAuth for both accounts, direct TLS usage/reset-credit reads, repeated on-device token refresh, reboot recovery and 28 successful polling cycles. The host bridge was removed after these checks. A five-minute retry-aware run had no polling failures or USB retries and stable idle heap.
 - Public candidate: pinned clean local build, verified full backup, allowlisted flash writes and readback verification. The application preserves the established credential/history partitions.
+- Python runtime dependency audit: no known vulnerabilities after upgrading Pillow to 13.0.0. This is a point-in-time package audit, not a firmware security certification.
 - 34 host tests pass locally, including 353 generated C++/Python forecast comparisons under address/undefined-behavior sanitizers, reset/threshold cases, USB framing, audio checksums and protection against firmware overwriting the credential partition.
 - The underlying alert detector previously passed 120 on-board synthetic parity cases; its algorithm is unchanged in this release.
+- Public candidate stability run: 11 completed polling cycles, zero failed polls, ten USB samples over about five minutes, and no USB retries or audio failures. Idle heap snapshots varied by only 24 bytes. A software reboot returned to DIRECT in 14.5 seconds with audio ready. Both accounts independently refreshed their tokens and returned HTTP 200 for usage and reset credits.
 - Public voice assets and fixed ES8311 adapter initialize on the real board. The user confirmed the replacement warning voice is clear at the stored volume.
 - Public firmware configuration succeeds over framed USB, including Wi-Fi and timezone. Existing independent accounts reconnect. Fresh browser pairing was tested on the precursor; the new generic setup wrapper still needs a clean-device, independent-user walkthrough.
 - Fresh repository, ignored private build/cache/backup areas, curated files, tracked-tree privacy scan, license notices and synthetic illustration. No personal screenshots or account data are intended for publication.
