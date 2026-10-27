@@ -28,8 +28,10 @@ String nativeTimezone(){return displayTimezone;}
 void setNetwork(const String &s) {
     xSemaphoreTake(stateLock, portMAX_DELAY); networkState=s; xSemaphoreGive(stateLock);
 }
+void nativeConnectionState(const String& state){setNetwork(state);}
 void nativePublishPacket(const String& value){
-    xSemaphoreTake(stateLock,portMAX_DELAY);packet=value;packetAt=millis();networkState="LIVE";transport="DIRECT";xSemaphoreGive(stateLock);
+    JsonDocument doc;deserializeJson(doc,value);String connection=doc["connection"]|"RETRYING";
+    xSemaphoreTake(stateLock,portMAX_DELAY);packet=value;packetAt=millis();networkState=connection;transport="DIRECT";xSemaphoreGive(stateLock);
 }
 void networkTask(void*) {
     WiFi.mode(WIFI_STA);WiFi.setSleep(false);WiFi.setAutoReconnect(true);
@@ -118,8 +120,9 @@ void drawCard(JsonVariant a,int index,int y,int64_t now,bool connected) {
     text("RESET IN",166,y+23,MUTED);text(countdown(w["reset"]|0LL,now),166,y+36,WHITE);
     canvas.fillRoundRect(20,y+52,280,3,1,0x2A3A4E);
     if(known&&remaining>0)canvas.fillRoundRect(20,y+52,max(3,remaining*280/100),3,1,level);
-    text("RUNWAY "+runwayText(f,now,unavailable),20,y+61,unavailable?AMBER:WHITE);
-    right(f["partial"]==true?"PARTIAL":String(f["confidence"]|"LOW")+" CONF",300,y+61,MUTED);
+    if(!a["error"].isNull())text(a["error"].as<String>(),20,y+61,AMBER);
+    else text("RUNWAY "+runwayText(f,now,unavailable),20,y+61,unavailable?AMBER:WHITE);
+    if(a["error"].isNull())right(f["partial"]==true?"PARTIAL":String(f["confidence"]|"LOW")+" CONF",300,y+61,MUTED);
     text(creditText(a)+" CREDITS",20,y+74,MUTED);
     right(bankText(a)+" BANKED",300,y+74,a["banked"].as<int>()>0?color:MUTED);
     String rate=unavailable||f["rate"].isNull()?"AT RECENT PACE":"BURN "+String(f["rate"].as<double>(),1)+"%/H";
@@ -157,7 +160,7 @@ void drawDetails(JsonVariant a,int64_t now,bool connected) {
     if(f["resetFirst"]==true)range="AT PACE: "+runwayText(f,now,unavailable,true);
     if(unavailable)range="WAITING FOR FRESH DATA";
     text("RANGE",20,194,MUTED);right(range,298,194,MUTED);
-    String note=unavailable?"STALE - CHECK MAC / SIGN-IN":f["resetPossible"]==true?"RESET MAY ARRIVE BEFORE EXHAUSTION":f["rate"].isNull()?"LEARNING FROM MEASURED QUOTA USE":String(f["confidence"]|"LOW")+" CONF / "+String(f["rate"].as<double>(),1)+"%/H / "+durationText(f["coverageSeconds"]|0)+" DATA";
+    String note=unavailable?(a["error"].isNull()?"STALE - RECONNECTING":a["error"].as<String>()):f["resetPossible"]==true?"RESET MAY ARRIVE BEFORE EXHAUSTION":f["rate"].isNull()?"LEARNING FROM MEASURED QUOTA USE":String(f["confidence"]|"LOW")+" CONF / "+String(f["rate"].as<double>(),1)+"%/H / "+durationText(f["coverageSeconds"]|0)+" DATA";
     text(note,12,222,unavailable?AMBER:MUTED);
     if(windows.size()>1)text("TAP RIGHT: NEXT WINDOW",12,233,MUTED);
 }
@@ -192,23 +195,26 @@ void draw() {
         text("QUOTAPANEL",20,25,MINT,2);
         large("ESP32",20,65,WHITE);
         text(configured?net:"READY TO PAIR",20,120,AMBER);
-        text(configured?"Pair accounts with the USB tool":"Run quotapanel.py configure",20,145,MUTED);
+        text(!configured?"Run quotapanel.py configure":nativeEnabled()?"Connecting automatically...":"Pair accounts with the USB tool",20,145,MUTED);
         text("Wi-Fi + direct OpenAI connection",20,162,MUTED);
     } else {
         JsonDocument doc;deserializeJson(doc,body);
         int64_t now=doc["now"].as<int64_t>()+(uint32_t)(millis()-received)/1000;
         processAlerts(doc,now);
         uint32_t freshness=nativeEnabled()?90000:15000;
-        if(detailPage>=0)drawDetails(doc["accounts"][detailPage],now,net=="LIVE" && millis()-received<freshness);
+        if(detailPage>=0)drawDetails(doc["accounts"][detailPage],now,WiFi.status()==WL_CONNECTED && millis()-received<freshness);
         else {
             text("QUOTAPANEL",12,10,WHITE,2);
             bool live=net=="LIVE" && !stale(doc["accounts"][0],now) && !stale(doc["accounts"][1],now) && millis()-received<freshness;
             canvas.fillCircle(242,17,3,live?MINT:AMBER);right(live?"LIVE":"STALE",282,13,live?MINT:AMBER);speakerIcon();
-            drawCard(doc["accounts"][0],0,30,now,net=="LIVE" && millis()-received<freshness);drawCard(doc["accounts"][1],1,130,now,net=="LIVE" && millis()-received<freshness);
+            drawCard(doc["accounts"][0],0,30,now,WiFi.status()==WL_CONNECTED && millis()-received<freshness);drawCard(doc["accounts"][1],1,130,now,WiFi.status()==WL_CONNECTED && millis()-received<freshness);
             int64_t updated=min(doc["accounts"][0]["updated"].as<int64_t>(),doc["accounts"][1]["updated"].as<int64_t>());
             String age=updated>0?String((long)(now-updated))+"s":"--";
             if((int32_t)(bannerUntil-millis())>0)text(alertBanner,12,232,MINT);
-            else {text((nativeEnabled()?"DIRECT ":"SYNC ")+age+" AGO",12,232,MUTED);right("TAP ACCOUNT FOR DETAILS",308,232,MUTED);}
+            else if(!doc["retryAt"].isNull()){
+                text("RETRY IN "+String((long)max(0LL,doc["retryAt"].as<int64_t>()-now))+"s",12,232,AMBER);
+                right("TAP FOR DETAILS",308,232,MUTED);
+            }else {text((nativeEnabled()?"DIRECT ":"SYNC ")+age+" AGO",12,232,MUTED);right("TAP ACCOUNT FOR DETAILS",308,232,MUTED);}
         }
     }
     canvas.pushSprite(0,0);
@@ -274,8 +280,8 @@ void serialCommands() {
                 if(transferLength&&transfer.length()==transferLength&&hash==transferHash){if(transfer.startsWith("CONFIG "))configure(transfer.substring(7));else Serial.println(nativeClientCommand(transfer));}else Serial.println("ERROR TRANSFER");
                 transfer="";transferLength=0;
             } else if(line=="STATUS") {
-                JsonDocument d;d["firmware"]="quotapanel-0.1.0-alpha.1";d["standalone"]=nativeEnabled();d["audioReady"]=audioReady();d["muted"]=audioMuted();d["volume"]=audioVolume();d["alertsPlayed"]=audioPlayed();d["audioFailures"]=audioFailed();d["configured"]=configured;d["wifi"]=WiFi.status()==WL_CONNECTED;
-                d["ip"]=WiFi.localIP().toString();d["rssi"]=WiFi.RSSI();d["heap"]=ESP.getFreeHeap();d["uptime"]=millis()/1000;
+                JsonDocument d;d["firmware"]="quotapanel-0.1.0-alpha.2";d["standalone"]=nativeEnabled();d["audioReady"]=audioReady();d["muted"]=audioMuted();d["volume"]=audioVolume();d["alertsPlayed"]=audioPlayed();d["audioFailures"]=audioFailed();d["configured"]=configured;d["wifi"]=WiFi.status()==WL_CONNECTED;
+                d["ip"]=WiFi.localIP().toString();d["rssi"]=WiFi.RSSI();d["heap"]=ESP.getFreeHeap();d["psramFree"]=ESP.getFreePsram();d["uptime"]=millis()/1000;
                 xSemaphoreTake(stateLock,portMAX_DELAY);d["network"]=networkState;d["transport"]=transport;d["packetAge"]=packet.isEmpty()?-1:(int)((millis()-packetAt)/1000);xSemaphoreGive(stateLock);
                 serializeJson(d,Serial);Serial.println();
             } else if(line=="DATA") {

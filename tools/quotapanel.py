@@ -251,6 +251,9 @@ def main():
     sub.add_parser("data")
     sub.add_parser("enable")
     sub.add_parser("reboot")
+    sub.add_parser("diagnose")
+    sub.add_parser("tls-check")
+    sub.add_parser("reconnect")
     config = sub.add_parser("configure")
     config.add_argument("--ssid")
     config.add_argument("--timezone", default="UTC0")
@@ -301,6 +304,25 @@ def main():
             print("Settings saved. Display is restarting.")
         elif args.command == "status":
             print(json.dumps(device.query("STATUS", "firmware"), indent=2))
+        elif args.command == "diagnose":
+            print(
+                json.dumps(
+                    {
+                        "device": device.query("STATUS", "firmware"),
+                        "connection": device.query("NATIVE STATUS", "state"),
+                    },
+                    indent=2,
+                )
+            )
+        elif args.command in ("tls-check", "reconnect"):
+            print(
+                json.dumps(
+                    device.native(
+                        "TLSCHECK" if args.command == "tls-check" else "RECONNECT"
+                    ),
+                    indent=2,
+                )
+            )
         elif args.command == "data":
             print(json.dumps(device.query("DATA", "source"), indent=2))
         elif args.command == "enable":
