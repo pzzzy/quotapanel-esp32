@@ -20,6 +20,7 @@ Run `enable` after both accounts are paired. The footer should become DIRECT. Br
 
 ## Recovery
 
+- No data: run `diagnose` for per-account HTTP/TLS errors and retry state. A `TLS CERTIFICATE ERROR` needs an up-to-date firmware trust bundle; repeated sign-in does not fix it. Failed fetches retry automatically.
 - No Wi-Fi: run `configure` again. Configuration works before Wi-Fi and clock setup.
 - Invalid/expired login, or uncertain interrupted token rotation: run `pair` again for that account, then `enable`.
 - Refresh test: `refresh --account 1`. Do not repeatedly force refresh in normal operation; the board refreshes proactively and after an authentication failure.

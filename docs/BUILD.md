@@ -34,3 +34,9 @@ Every binary release must be accompanied by the project's tagged source and its 
 `tools/package_sources.py` creates this dependency archive from PlatformIO's installed packages and the environment's library directory. Do not substitute personal device backups for build outputs. See licenses/NOTICE.md for upstream provenance and terms.
 
 Install `requirements-dev.txt` to run `python -m black --check tools tests`. CI checks Python formatting as well as behavior.
+
+## Updating certificate trust
+
+`certifi` is pinned in requirements.txt and tracked by Dependabot. After reviewing a root-store update, install the updated requirements and run `python tools/generate_ca_bundle.py`. Commit the PEM, PEM header and JSON manifest together, preserving the MPL-2.0 notice. The manifest records input/output SHA-256, source version and root subjects. `python tools/generate_ca_bundle.py --check` and the test suite reject stale generated data. The generator uses cryptography, installed with esptool. Complete certificates are intentional: the old SDK compact verifier cannot build some cross-signed paths correctly. TLS allocation uses the supported board's PSRAM; the application remains within its 2 MiB partition.
+
+On hardware, `python tools/quotapanel.py tls-check` sends unauthenticated requests to the two service hosts and expired/wrong-host/self-signed badssl test endpoints. Valid service hosts must reach HTTP; all three invalid-certificate endpoints must fail with a TLS verification error. Do not treat DNS/TCP failure as proof of certificate rejection. Diagnostic endpoints never receive account tokens.

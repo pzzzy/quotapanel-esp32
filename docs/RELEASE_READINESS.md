@@ -1,8 +1,17 @@
-# Release readiness: 0.1.0-alpha.1
+# Release readiness
 
 **Suitable for an experimental open-source alpha on the documented board. Not yet a general-purpose appliance or stable release.**
 
-## Evidence
+## 0.1.0-alpha.2 recovery correction
+
+A real power-off/restart incident exposed an endpoint certificate rotation, not lost account sessions. The previous two-root trust set rejected the new Google chain. A compact Mozilla bundle was also insufficient because the older SDK's callback mishandles the cross-signed chain. The correction uses complete Mozilla/certifi roots and the standard path verifier, with TLS memory in PSRAM.
+
+Negative testing also revealed that the pinned SDK disables certificate-date verification. The new adapter checks the selected chain's UTC validity before allowing HTTP transmission, without clearing other verification errors. A fresh SNTP sync is required each boot. Diagnostic errors and retries are visible on the board; a definitely-unsent refresh can retry without invalidating the session.
+
+The host suite now contains 37 tests, including trusted-root provenance, complete trust-set preservation, certificate-time boundaries, and conservative refresh/backoff policy. Hardware results for this correction are recorded in the release notes.
+
+## Initial alpha evidence
+
 
 - Standalone precursor: independent browser OAuth for both accounts, direct TLS usage/reset-credit reads, repeated on-device token refresh, reboot recovery and 28 successful polling cycles. The host bridge was removed after these checks. A five-minute retry-aware run had no polling failures or USB retries and stable idle heap.
 - Public candidate: pinned clean local build, verified full backup, allowlisted flash writes and readback verification. The application preserves the established credential/history partitions.

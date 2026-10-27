@@ -1,14 +1,19 @@
-// Experimental direct connectivity diagnostics. The existing display stays live.
+// SPDX-License-Identifier: GPL-3.0-only
+// Standalone HTTPS polling, authentication and bounded recovery.
 #include "native_client.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
+#include "verified_tls.h"
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <nvs_flash.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/sha256.h>
+#include <mbedtls/platform.h>
+#include <esp_heap_caps.h>
 #include <time.h>
+#include <esp_sntp.h>
+#include "recovery_policy.h"
 #include <algorithm>
 #include <atomic>
 #include "native_roots.h"
@@ -43,7 +48,7 @@ public:
 void request(const char* name,const String &url,const String &payload,
              const String &access,const String &account,JsonObject out,
              String* returned=nullptr,bool form=false) {
-    WiFiClientSecure tls;tls.setCACert(NATIVE_ROOTS);tls.setHandshakeTimeout(20);
+    VerifiedTLSClient tls;tls.setCACert(NATIVE_ROOTS);tls.setHandshakeTimeout(20);
     HTTPClient http;http.setConnectTimeout(15000);http.setTimeout(15000);
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.setReuse(false);http.setUserAgent("codex-cli");
@@ -55,6 +60,9 @@ void request(const char* name,const String &url,const String &payload,
     if(payload.length()){http.addHeader("Content-Type",form?"application/x-www-form-urlencoded":"application/json");status=http.POST(payload);}
     else status=http.GET();
     out["endpoint"]=name;out["http"]=status;out["elapsedMs"]=millis()-start;
+    char tlsMessage[160]={};int tlsError=status<0?tls.lastError(tlsMessage,sizeof(tlsMessage)):0;
+    out["tlsError"]=tlsError;out["verificationFlags"]=tls.verificationFlags;
+    if(status<0){out["httpError"]=HTTPClient::errorToString(status);if(tlsError)out["tlsMessage"]=tlsMessage;}
     out["tlsVerified"]=status>0;out["contentType"]=http.header("Content-Type");
     out["challenge"]=http.header("cf-mitigated")=="challenge";
     if(http.header("Retry-After").length())out["retryAfter"]=http.header("Retry-After").toInt();
@@ -203,25 +211,51 @@ void refresh(int slot,JsonDocument &report,bool performRefresh) {
         if(!saveSession(slot,session)){report["error"]="storage_failed_before_refresh";return;}
         JsonObject metadata=requests.add<JsonObject>();
         request("token-refresh","https://auth.openai.com/oauth/token",encoded,"","",metadata,&body);
-        if(metadata["http"].as<int>()!=200 || !acceptTokens(body,session["account"].as<String>(),session)){report["error"]="refresh_failed_reauthorize";return;}
+        if(metadata["http"].as<int>()!=200 || !acceptTokens(body,session["account"].as<String>(),session)){
+            if(recovery::refreshDefinitelyUnsent(metadata["http"].as<int>())){
+                session.remove("refreshPending");
+                report["error"]=saveSession(slot,session)?"refresh_connection_failed":"refresh_state_storage_failed";
+            }else report["error"]="refresh_failed_reauthorize";
+            return;
+        }
         session.remove("refreshPending");
         if(!saveSession(slot,session)){report["error"]="refreshed_session_storage_failed";return;}
         report["refreshed"]=true;
     }
     report["slot"]=slot;report["expires"]=session["expires"];accountReads(session,requests);
 }
+std::atomic<bool> timeSynchronized{false};
 bool clockReady(){
-    if(time(nullptr)>=1760000000)return true;
-    configTime(0,0,"time.cloudflare.com","pool.ntp.org","time.google.com");
-    setenv("TZ",nativeTimezone().c_str(),1);tzset();
-    uint32_t start=millis();while(time(nullptr)<1760000000&&millis()-start<25000)vTaskDelay(pdMS_TO_TICKS(250));
-    return time(nullptr)>=1760000000;
+    static bool started=false;
+    if(!started){
+        sntp_set_time_sync_notification_cb([](struct timeval*){timeSynchronized=true;});
+        configTime(0,0,"time.cloudflare.com","pool.ntp.org","time.google.com");
+        setenv("TZ",nativeTimezone().c_str(),1);tzset();started=true;
+    }
+    if(timeSynchronized&&time(nullptr)>=1760000000)return true;
+    nativeConnectionState("SYNCING CLOCK");
+    uint32_t start=millis();
+    while((!timeSynchronized||time(nullptr)<1760000000)&&millis()-start<25000)vTaskDelay(pdMS_TO_TICKS(250));
+    return timeSynchronized&&time(nullptr)>=1760000000;
+}
+String accountError(JsonDocument& report){
+    String error=report["error"]|"";
+    if(error=="reauthorization_required"||error=="refresh_failed_reauthorize"||error=="no_device_session")return "SIGN IN AGAIN";
+    if(error.indexOf("storage")>=0)return "ACCOUNT STORAGE ERROR";
+    for(JsonObject r:report["requests"].as<JsonArray>()){
+        int http=r["http"]|0;if(http!=200)return recovery::requestError(http,r["tlsError"]|0);
+    }
+    return "INVALID SERVER DATA";
 }
 void pollAccounts(){
-    if(WiFi.status()!=WL_CONNECTED||!clockReady())return;
+    if(WiFi.status()!=WL_CONNECTED){nativeConnectionState("CONNECTING WI-FI");nextPoll=millis()+1000;return;}
+    if(!clockReady()){
+        JsonDocument status;status["state"]="clock_unavailable";status["retrySeconds"]=10;publish(status);
+        nextPoll=millis()+10000;return;
+    }
     uint32_t pollStarted=millis();
-    JsonDocument status;status["state"]="polling";status["native"]=true;publish(status);
-    bool all=true;uint32_t retryAfter=0;
+    JsonDocument status;status["state"]="polling";status["native"]=true;status["epoch"]=(int64_t)time(nullptr);publish(status);
+    bool all=true,any=false;uint32_t retryAfter=0;
     for(int slot=0;slot<2;slot++){
         JsonDocument session,report;report["requests"].to<JsonArray>();
         bool loaded=loadSession(slot,session);
@@ -237,35 +271,43 @@ void pollAccounts(){
             if(r["endpoint"].as<String>()=="reset-credits")credits=r["data"].as<JsonObject>();
         }
         bool valid=report["error"].isNull()&&!usage.isNull()&&!credits.isNull()&&credits["credits"].is<JsonArray>()&&credits["available_count"].is<int>()&&loaded&&usage["account_id"].as<String>()==session["account"].as<String>();
-        if(valid){cached[slot].clear();nativeDataUpdate(slot,session["account"].as<String>(),usage,credits,cached[slot].to<JsonObject>(),time(nullptr));}
-        else {all=false;cached[slot]["label"]=slot==0?"PRIMARY":"SECONDARY";cached[slot]["error"]=report["error"]|"Direct fetch failed";}
+        if(valid){any=true;cached[slot].clear();nativeDataUpdate(slot,session["account"].as<String>(),usage,credits,cached[slot].to<JsonObject>(),time(nullptr));}
+        else {all=false;cached[slot]["label"]=slot==0?"PRIMARY":"SECONDARY";cached[slot]["error"]=accountError(report);}
         JsonObject summary=status["accounts"][slot].to<JsonObject>();summary["ok"]=valid;
         summary["error"]=cached[slot]["error"];summary["expires"]=report["expires"];
         JsonArray requests=summary["requests"].to<JsonArray>();
-        for(JsonObject r:report["requests"].as<JsonArray>()){auto item=requests.add<JsonObject>();item["endpoint"]=r["endpoint"];item["http"]=r["http"];item["elapsedMs"]=r["elapsedMs"];}
+        for(JsonObject r:report["requests"].as<JsonArray>()){
+            auto item=requests.add<JsonObject>();
+            for(const char* key:{"endpoint","http","elapsedMs","tlsError","tlsMessage","httpError","retryAfter","verificationFlags"})if(!r[key].isNull())item[key]=r[key];
+        }
     }
+    pollCount++;if(!all){pollFailures++;consecutiveFailures++;}else consecutiveFailures=0;
+    uint32_t waitMs=all?30000:recovery::retryMs(consecutiveFailures,retryAfter);
+    nextPoll=all&&millis()-pollStarted<waitMs?pollStarted+waitMs:millis()+(all?1000:waitMs);
     JsonDocument data;data["version"]=1;data["source"]="esp32";data["now"]=(int64_t)time(nullptr);
+    data["connection"]=all?"LIVE":any?"PARTIAL DATA":"RETRYING";
+    if(!all)data["retryAt"]=(int64_t)time(nullptr)+waitMs/1000;
     JsonArray accounts=data["accounts"].to<JsonArray>();for(auto &a:cached)accounts.add(a.as<JsonObject>());
     nativeDataEvents(data["alerts"].to<JsonArray>(),time(nullptr));String value;serializeJson(data,value);nativePublishPacket(value);
-    pollCount++;if(!all){pollFailures++;consecutiveFailures++;}else consecutiveFailures=0;
-    uint32_t waitMs=all?30000:std::min(300000u,30000u*(1u<<std::min(4u,consecutiveFailures)));
-    waitMs=std::max(waitMs,retryAfter*1000);
-    nextPoll=all&&millis()-pollStarted<waitMs?pollStarted+waitMs:millis()+(all?1000:waitMs);
     status["state"]="complete";status["polls"]=pollCount;status["failedPolls"]=pollFailures;
-    status["historySamples"]=nativeHistoryCount();status["nextPollSeconds"]=waitMs/1000;status["heap"]=ESP.getFreeHeap();status["stackFree"]=uxTaskGetStackHighWaterMark(nullptr);publish(status);
+    status["historySamples"]=nativeHistoryCount();status["nextPollSeconds"]=waitMs/1000;status["heap"]=ESP.getFreeHeap();status["psramFree"]=ESP.getFreePsram();status["stackFree"]=uxTaskGetStackHighWaterMark(nullptr);publish(status);
 }
 void worker(void*) {
+    bool wasOnline=false;
     for(;;) {
+        bool online=WiFi.status()==WL_CONNECTED;
+        if(online&&!wasOnline){nextPoll=millis();consecutiveFailures=0;}
+        wasOnline=online;
         String* command=nullptr;
         if(xQueueReceive(jobs,&command,pdMS_TO_TICKS(1000))!=pdTRUE){
             if(enabled&&(int32_t)(millis()-nextPoll)>=0){nextPoll=millis()+30000;pollAccounts();}
             continue;
         }
         inCommand=true;cancelled=false;JsonDocument report;report["state"]="running";publish(report);
-        bool local=command->startsWith("FORGET ");
+        bool local=command->startsWith("FORGET ")||*command=="RECONNECT";
         if(!local&&WiFi.status()!=WL_CONNECTED){report["state"]="wifi_unavailable";publish(report);inCommand=false;delete command;continue;}
-        if(!local)clockReady();
-        report["clockReady"]=time(nullptr)>=1760000000;report["epoch"]=(int64_t)time(nullptr);
+        bool synchronized=!local&&clockReady();
+        report["clockReady"]=synchronized;report["epoch"]=(int64_t)time(nullptr);
         if(!local&&!report["clockReady"].as<bool>()){report["state"]="clock_unavailable";publish(report);inCommand=false;delete command;continue;}
         JsonArray requests=report["requests"].to<JsonArray>();
         if(command->startsWith("FORGET ")) {
@@ -292,6 +334,14 @@ void worker(void*) {
             bool seed=command->startsWith("SEED ");JsonDocument input,session;
             if(deserializeJson(input,command->substring(seed?5:9))||!input["slot"].is<int>()||input["slot"].as<int>()<0||input["slot"].as<int>()>1||!loadSession(input["slot"],session))report["error"]="invalid_import";
             else {bool ok=seed?nativeDataSeed(session["account"].as<String>(),input.as<JsonObject>()):nativeDataBaseline(input["slot"],session["account"].as<String>(),input["prior"].as<JsonObject>());report["imported"]=ok;if(!ok)report["error"]="import_failed";}
+        } else if(*command=="TLSCHECK") {
+            request("valid-google-ca","https://chatgpt.com/backend-api/wham/usage","","","",requests.add<JsonObject>());
+            request("valid-auth","https://auth.openai.com/.well-known/openid-configuration","","","",requests.add<JsonObject>());
+            request("expired-certificate","https://expired.badssl.com/","","","",requests.add<JsonObject>());
+            request("wrong-hostname","https://wrong.host.badssl.com/","","","",requests.add<JsonObject>());
+            request("untrusted-certificate","https://self-signed.badssl.com/","","","",requests.add<JsonObject>());
+        } else if(*command=="RECONNECT") {
+            WiFi.disconnect(false,false);report["reconnecting"]=true;
         } else if(*command=="PROBE") {
             request("auth-discovery","https://auth.openai.com/.well-known/openid-configuration","","","",requests.add<JsonObject>());
             request("usage-unauthenticated","https://chatgpt.com/backend-api/wham/usage","","","",requests.add<JsonObject>());
@@ -319,6 +369,12 @@ void worker(void*) {
 }
 }
 void nativeClientBegin() {
+    // This board has 8 MiB PSRAM. Keep the full trusted-root chain and TLS
+    // workspace there instead of exhausting the small internal/DMA heap.
+    // The standard mbedTLS verifier handles cross-signed roots correctly.
+    mbedtls_platform_set_calloc_free(
+        [](size_t n,size_t bytes)->void*{return heap_caps_calloc(n,bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);},
+        heap_caps_free);
     lock=xSemaphoreCreateMutex();jobs=xQueueCreate(1,sizeof(String*));
     esp_err_t err=nvs_flash_init_partition("accounts");
     if(err==ESP_ERR_NVS_NO_FREE_PAGES||err==ESP_ERR_NVS_NEW_VERSION_FOUND){
@@ -346,7 +402,7 @@ String nativeClientCommand(const String &command) {
     if(command=="RESULT") {xSemaphoreTake(lock,portMAX_DELAY);String copy=commandResult;xSemaphoreGive(lock);return copy;}
     if(command=="STATUS") {xSemaphoreTake(lock,portMAX_DELAY);String copy=result;xSemaphoreGive(lock);return copy;}
     if(command=="CANCEL"){cancelled=true;return "OK NATIVE CANCEL";}
-    if(command!="PROBE" && !command.startsWith("ACCESS ") && !command.startsWith("AUTH ") && !command.startsWith("BROWSER ") && !command.startsWith("CALLBACK ") && !command.startsWith("REFRESH ") && !command.startsWith("READ ") && !command.startsWith("MODE ") && !command.startsWith("SEED ") && !command.startsWith("BASELINE ") && !command.startsWith("ALERTTEST ") && !command.startsWith("FORGET "))return "ERROR NATIVE COMMAND";
+    if(command!="PROBE" && command!="TLSCHECK" && command!="RECONNECT" && !command.startsWith("ACCESS ") && !command.startsWith("AUTH ") && !command.startsWith("BROWSER ") && !command.startsWith("CALLBACK ") && !command.startsWith("REFRESH ") && !command.startsWith("READ ") && !command.startsWith("MODE ") && !command.startsWith("SEED ") && !command.startsWith("BASELINE ") && !command.startsWith("ALERTTEST ") && !command.startsWith("FORGET "))return "ERROR NATIVE COMMAND";
     String* job=new String(command);
     if(uxQueueSpacesAvailable(jobs)==0){delete job;return "ERROR NATIVE BUSY";}
     xSemaphoreTake(lock,portMAX_DELAY);commandResult="{\"state\":\"queued\"}";xSemaphoreGive(lock);

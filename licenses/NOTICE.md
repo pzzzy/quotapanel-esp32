@@ -11,7 +11,7 @@ QuotaPanel ESP32 project code is Copyright 2026 QuotaPanel ESP32 contributors, G
 | ES8311 adapter | Apache-2.0; adapted from Espressif esp-adf [es8311.c at 1c7aa251b937742f1308c4f3b9e7587034bc5fb7](https://github.com/espressif/esp-adf/blob/1c7aa251b937742f1308c4f3b9e7587034bc5fb7/components/esp_codec_dev/device/es8311/es8311.c); Apache-2.0.txt |
 | Adafruit GFX font support | BSD; Adafruit-fonts.txt |
 | GNU FreeFont-derived FreeSans glyphs | GPL-3.0-or-later with font exception; [GNU FreeFont licensing](https://www.gnu.org/software/freefont/license.html); root GPL text and upstream notices in the source bundle |
-| ISRG root certificates | Public trust anchors; [Let's Encrypt certificate sources](https://letsencrypt.org/certificates/); embedded public certificates contain no private keys |
+| Mozilla root store via certifi 2026.10.23 | MPL-2.0; [certifi](https://github.com/certifi/python-certifi); Certifi-MPL-2.0.txt; original PEM in assets/ca-roots.pem and generated bundle/provenance in native_roots.h and assets/ca-bundle.json |
 | Speech clips and dashboard illustration | CC0-1.0; CC0-1.0.txt and assets/README.md |
 
 The ES8311 adaptation replaces the general codec abstraction with a small fixed 22,050 Hz DAC-only register sequence and readback checks. Original Espressif attribution is retained. It does not use or distribute the prototype's audio-driver library.
