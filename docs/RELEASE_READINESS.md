@@ -14,7 +14,7 @@
 - Public firmware configuration succeeds over framed USB, including Wi-Fi and timezone. Existing independent accounts reconnect. Fresh browser pairing was tested on the precursor; the new generic setup wrapper still needs a clean-device, independent-user walkthrough.
 - Fresh repository, ignored private build/cache/backup areas, curated files, tracked-tree privacy scan, license notices and synthetic illustration. No personal screenshots or account data are intended for publication.
 
-One post-flash USB status attempt timed out; an explicit hardware reset restored normal startup. This is recorded rather than counted as a clean first-boot success. The setup guide includes reset recovery. A full restore was not destructively exercised against the currently configured device.
+Post-flash USB checks exposed a repeatable need for an explicit USB-UART reset after the flasher exits. The flash tool now performs that reset and verifies the application version before reporting completion; this recovery path was tested on the board. Manual reset recovery remains documented for other USB/host combinations. A full restore was not destructively exercised against the currently configured device.
 
 ## Conditions before a stable release
 

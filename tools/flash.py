@@ -6,7 +6,7 @@ Backups can contain credentials: keep them private and out of issue reports.
 
 import argparse, hashlib, json, os, subprocess, sys, time
 from pathlib import Path
-from quotapanel import select_port
+from quotapanel import Device, select_port
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZE = 16 * 1024 * 1024
@@ -122,6 +122,21 @@ def verify_bundle(directory):
     return args
 
 
+def boot_and_verify(port):
+    # Explicit USB-UART reset is required on the tested board after the stub
+    # flasher exits. Keep GPIO0 released, pulse EN, then verify the application.
+    with Device(port) as device:
+        device.wire.dtr = False
+        device.wire.rts = True
+        time.sleep(0.15)
+        device.wire.rts = False
+        time.sleep(2)
+        result = device.query("STATUS", "firmware")
+        if not result["firmware"].startswith("quotapanel-"):
+            raise RuntimeError("Unexpected application after flashing")
+        print("Application started: " + result["firmware"])
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--port")
@@ -215,6 +230,7 @@ def main():
         ],
         before="no-reset",
     )
+    boot_and_verify(port)
     print(
         "Firmware verified. Next: configure Wi-Fi, pair both accounts, enable direct mode."
     )

@@ -24,7 +24,7 @@ Run `enable` after both accounts are paired. The footer should become DIRECT. Br
 - Invalid/expired login, or uncertain interrupted token rotation: run `pair` again for that account, then `enable`.
 - Refresh test: `refresh --account 1`. Do not repeatedly force refresh in normal operation; the board refreshes proactively and after an authentication failure.
 - Remove an account: `forget --account 1`, then type FORGET. This works offline, pauses polling and reboots. Pair both slots and enable to resume.
-- After flashing: if the first status check times out, tap RESET/EN once and wait for Wi-Fi/clock synchronization before retrying.
+- After flashing: the tool pulses reset and verifies the application starts. If a status check still times out, tap RESET/EN once and wait for Wi-Fi/clock synchronization before retrying.
 - USB timeout: close competing monitors, inspect cable/port, retry read-only diagnostics. Do not blindly replay token exchange or refresh operations after an uncertain result.
 - Restore the original device: `python tools/flash.py --port YOUR_PORT restore PRIVATE_BACKUP_DIRECTORY`. Type RESTORE only when you intend to replace all flash. The tool verifies the saved image hash before writing and verifies the flashed result before boot.
 
