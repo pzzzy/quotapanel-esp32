@@ -1,47 +1,46 @@
 #include "native_data.h"
 #include "native_forecast.h"
+#include "history_journal.h"
 #include <Preferences.h>
 #include <esp_partition.h>
 #include <cmath>
 #include <algorithm>
 namespace {
-struct Record {uint32_t magic,sequence,identity,window,reset,at;float used;uint32_t crc;};
-static_assert(sizeof(Record)==32,"Journal record layout");
-const uint32_t MAGIC=0x3148414f,CAPACITY=32768;
-Record* history=nullptr;uint32_t count=0,cursor=0,sequence=0,flashIndex=0;
+using historyjournal::Record;
+using historyjournal::MAGIC;
+using historyjournal::hashBytes;
+const uint32_t CAPACITY=32768;
+Record* history=nullptr;uint32_t count=0,cursor=0;
 const esp_partition_t* partition=nullptr;
+bool journalReady=false;
+struct FlashStorage {
+    uint32_t size()const{return partition?partition->size:0;}
+    bool read(uint32_t at,void* out,size_t size){return partition&&esp_partition_read(partition,at,out,size)==ESP_OK;}
+    bool write(uint32_t at,const void* data,size_t size){return partition&&esp_partition_write(partition,at,data,size)==ESP_OK;}
+    bool erase(uint32_t at,size_t size){return partition&&esp_partition_erase_range(partition,at,size)==ESP_OK;}
+} flash;
+historyjournal::Journal<FlashStorage> journal(flash);
 JsonDocument previous[2],events;uint64_t eventSequence=0;
-uint32_t hashBytes(const void* bytes,size_t size){uint32_t h=2166136261u;auto p=(const uint8_t*)bytes;for(size_t i=0;i<size;i++)h=(h^p[i])*16777619u;return h;}
 uint32_t hash(const String& s){return hashBytes(s.c_str(),s.length());}
 String key(JsonObject w){return w["bucket"].as<String>()+":"+w["slot"].as<String>()+":"+String(w["minutes"].as<int>());}
 void remember(const Record& r){history[cursor]=r;cursor=(cursor+1)%CAPACITY;if(count<CAPACITY)count++;}
-bool persist(Record r) {
-    if(!partition)return false;
-    const uint32_t slots=partition->size/sizeof(Record);flashIndex%=slots;
-    Record existing;
-    if(esp_partition_read(partition,flashIndex*sizeof(Record),&existing,sizeof(existing))!=ESP_OK)return false;
-    bool erased=true;for(size_t i=0;i<sizeof(existing);i++)if(((uint8_t*)&existing)[i]!=0xff)erased=false;
-    if(flashIndex%128 && !erased)flashIndex=((flashIndex/128+1)*128)%slots;
-    if(flashIndex%128==0 && esp_partition_erase_range(partition,flashIndex*sizeof(Record),4096)!=ESP_OK)return false;
-    r.sequence=++sequence;r.crc=hashBytes(&r,sizeof(r)-4);
-    bool ok=esp_partition_write(partition,flashIndex*sizeof(Record),&r,sizeof(r))==ESP_OK;
-    Record verify;if(ok)ok=esp_partition_read(partition,flashIndex*sizeof(Record),&verify,sizeof(verify))==ESP_OK&&!memcmp(&r,&verify,sizeof(r));
-    if(ok)flashIndex=(flashIndex+1)%slots;return ok;
-}
 bool add(uint32_t identity,uint32_t window,uint32_t reset,uint32_t at,float used,bool force=false) {
     if(!history||!at||!std::isfinite(used)||used<0||used>100)return false;
-    const Record* latest=nullptr;
+    const Record* latest=nullptr;const Record* saved=nullptr;
     for(uint32_t n=0;n<count;n++){const auto &r=history[n];
         if(r.identity==identity&&r.window==window&&r.reset==reset&&r.at==at&&r.used==used)return true;
-        if(r.identity==identity&&r.window==window&&(!latest||r.at>latest->at))latest=&r;
+        if(r.identity==identity&&r.window==window){
+            if(!latest||r.at>latest->at)latest=&r;
+            if(r.sequence&&(!saved||r.at>saved->at))saved=&r;
+        }
     }
     if(latest&&latest->at==at&&latest->used==used&&latest->reset==reset)return true;
-    // Durable five-minute checkpoints, plus every reset/correction. Live samples stay at polling cadence in PSRAM.
-    bool checkpoint=force||!latest||reset!=latest->reset||used<latest->used;
-    if(!checkpoint){uint32_t lastSaved=0;for(uint32_t n=0;n<count;n++){auto &r=history[n];if(r.identity==identity&&r.window==window&&r.sequence&&r.at>lastSaved)lastSaved=r.at;}checkpoint=at>=lastSaved+300;}
     Record r{MAGIC,0,identity,window,reset,at,used,0};
-    if(checkpoint){if(!persist(r))return false;r.sequence=sequence;}
-    remember(r);return true;
+    bool durable=true;
+    if(force||historyjournal::checkpoint(r,latest,saved))durable=journalReady&&journal.append(r);
+    // Keep useful live observations even if flash is unavailable; retry saving
+    // on subsequent polls, and report the failure instead of hiding it.
+    remember(r);return journalReady&&durable;
 }
 int64_t utcDate(const char* value) {
     if(!value)return 0;int y,m,d,hh,mm,ss;
@@ -51,7 +50,7 @@ int64_t utcDate(const char* value) {
     return ((int64_t)era*146097+doe-719468)*86400+hh*3600+mm*60+ss;
 }
 void forecast(JsonObject output,const nativeforecast::Estimate& f){
-    output["state"]=f.state;output["confidence"]=f.confidence;output["asOf"]=f.asOf;output["coverageSeconds"]=f.coverageSeconds;output["pointsConsumed"]=f.pointsConsumed;
+    output["historical"]=f.historical;output["historyAgeSeconds"]=f.historyAgeSeconds;output["state"]=f.state;output["confidence"]=f.confidence;output["asOf"]=f.asOf;output["coverageSeconds"]=f.coverageSeconds;output["pointsConsumed"]=f.pointsConsumed;
     output["seconds"]=nullptr;output["lowSeconds"]=nullptr;output["highSeconds"]=nullptr;output["rate"]=nullptr;
     if(f.seconds>=0)output["seconds"]=f.seconds;if(f.lowSeconds>=0)output["lowSeconds"]=f.lowSeconds;if(f.highSeconds>=0)output["highSeconds"]=f.highSeconds;if(f.rate>=0)output["rate"]=f.rate;
     output["resetFirst"]=f.resetFirst;output["resetPossible"]=f.resetPossible;
@@ -65,7 +64,7 @@ void windows(JsonArray out,JsonObject limit,const String& bucket,const String& n
         double used=source["used_percent"].is<double>()?source["used_percent"].as<double>():NAN;
         w["used"]=nullptr;w["remaining"]=nullptr;if(std::isfinite(used)&&used>=0&&used<=100){w["used"]=used;w["remaining"]=100-used;}
         uint32_t reset=source["reset_at"]|0u;w["reset"]=reset?JsonVariant(source["reset_at"]):JsonVariant();
-        uint32_t window=hash(key(w));if(std::isfinite(used))add(identity,window,reset,now,used);
+        uint32_t window=hash(key(w));w["historyHealthy"]=std::isfinite(used)&&add(identity,window,reset,now,used);
         std::vector<nativeforecast::Sample> samples;
         for(uint32_t n=0;n<count;n++){auto &r=history[n];if(r.identity==identity&&r.window==window&&r.reset==reset&&r.at>=now-86400&&r.at<=now)samples.push_back({(double)r.at,r.used});}
         forecast(w["forecast"].to<JsonObject>(),nativeforecast::estimate(samples,100-used,reset,now));
@@ -119,17 +118,13 @@ void alerts(int slot,const String& identity,JsonObject account,int64_t now,bool 
 }
 }
 bool nativeDataBegin(){
-    if(history)return partition!=nullptr;
+    if(history)return journalReady;
     partition=esp_partition_find_first(ESP_PARTITION_TYPE_DATA,(esp_partition_subtype_t)0x40,"history");
     if(!partition)return false;
     history=(Record*)ps_calloc(CAPACITY,sizeof(Record));if(!history)return false;
-    for(uint32_t i=0;i<partition->size/sizeof(Record);i++){
-        Record r;if(esp_partition_read(partition,i*sizeof(r),&r,sizeof(r))!=ESP_OK)continue;
-        if(r.magic!=MAGIC||r.crc!=hashBytes(&r,sizeof(r)-4)||!std::isfinite(r.used)||r.used<0||r.used>100)continue;
-        remember(r);if(r.sequence>=sequence){sequence=r.sequence;flashIndex=i+1;}
-    }
+    journalReady=journal.restore([](const Record& r){remember(r);});
     events.to<JsonArray>();Preferences p;if(p.begin("oa-native",true,"accounts")){for(int i=0;i<2;i++)deserializeJson(previous[i],p.getString(("prior"+String(i)).c_str(),"{}"));p.end();}
-    return true;
+    return journalReady;
 }
 uint32_t nativeHistoryCount(){return count;}
 bool nativeDataSeed(const String& identity,JsonObject input){

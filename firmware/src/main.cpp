@@ -122,10 +122,10 @@ void drawCard(JsonVariant a,int index,int y,int64_t now,bool connected) {
     if(known&&remaining>0)canvas.fillRoundRect(20,y+52,max(3,remaining*280/100),3,1,level);
     if(!a["error"].isNull())text(a["error"].as<String>(),20,y+61,AMBER);
     else text("RUNWAY "+runwayText(f,now,unavailable),20,y+61,unavailable?AMBER:WHITE);
-    if(a["error"].isNull())right(f["partial"]==true?"PARTIAL":String(f["confidence"]|"LOW")+" CONF",300,y+61,MUTED);
+    if(a["error"].isNull())right(f["partial"]==true?"PARTIAL":f["historical"]==true?"HISTORY":String(f["confidence"]|"LOW")+" CONF",300,y+61,MUTED);
     text(creditText(a)+" CREDITS",20,y+74,MUTED);
     right(bankText(a)+" BANKED",300,y+74,a["banked"].as<int>()>0?color:MUTED);
-    String rate=unavailable||f["rate"].isNull()?"AT RECENT PACE":"BURN "+String(f["rate"].as<double>(),1)+"%/H";
+    String rate=unavailable||f["rate"].isNull()?"AT RECENT PACE":String(f["historical"]==true?"PAST ":"BURN ")+String(f["rate"].as<double>(),1)+"%/H";
     text(rate,20,y+85,MUTED);
     String expiry=a["banked"]==0?"EXP --":a["bankExpires"].isNull()?"EXP UNKNOWN":String(a["bankExpiryComplete"]==false?"KNOWN ":"EXP ")+dateText(a["bankExpires"].as<int64_t>());
     right(expiry,300,y+85,MUTED);
@@ -161,7 +161,9 @@ void drawDetails(JsonVariant a,int64_t now,bool connected) {
     if(unavailable)range="WAITING FOR FRESH DATA";
     text("RANGE",20,194,MUTED);right(range,298,194,MUTED);
     String note=unavailable?(a["error"].isNull()?"STALE - RECONNECTING":a["error"].as<String>()):f["resetPossible"]==true?"RESET MAY ARRIVE BEFORE EXHAUSTION":f["rate"].isNull()?"LEARNING FROM MEASURED QUOTA USE":String(f["confidence"]|"LOW")+" CONF / "+String(f["rate"].as<double>(),1)+"%/H / "+durationText(f["coverageSeconds"]|0)+" DATA";
-    text(note,12,222,unavailable?AMBER:MUTED);
+    if(!unavailable&&f["historical"]==true)note="PAST PACE / LOW CONF / "+durationText(f["historyAgeSeconds"]|0)+" OLD";
+    if(w["historyHealthy"]==false)note="HISTORY NOT SAVED / CHECK DEVICE";
+    text(note,12,222,unavailable||w["historyHealthy"]==false?AMBER:MUTED);
     if(windows.size()>1)text("TAP RIGHT: NEXT WINDOW",12,233,MUTED);
 }
 void speakerIcon() {
@@ -227,7 +229,7 @@ void touch() {
     if(Wire.requestFrom(XZ_TOUCH_ADDR,5)!=(uint8_t)5)return;
     int n=Wire.read()&15;int xh=Wire.read(),xl=Wire.read(),yh=Wire.read(),yl=Wire.read();
     int rawX=((xh&15)<<8)|xl,rawY=((yh&15)<<8)|yl;
-    int x=319-rawY,y=rawX;
+    int x=rawY,y=239-rawX;
     if(n>0 && n<=2 && !down && x>=0&&x<320&&y>=0&&y<240){
         if(y<30 && x>100 && (detailPage<0 || x<205)){audioToggleMute();}
         else if(detailPage<0){detailPage=y<128?0:1;detailWindow=0;}
@@ -280,7 +282,7 @@ void serialCommands() {
                 if(transferLength&&transfer.length()==transferLength&&hash==transferHash){if(transfer.startsWith("CONFIG "))configure(transfer.substring(7));else Serial.println(nativeClientCommand(transfer));}else Serial.println("ERROR TRANSFER");
                 transfer="";transferLength=0;
             } else if(line=="STATUS") {
-                JsonDocument d;d["firmware"]="quotapanel-0.1.0-alpha.2";d["standalone"]=nativeEnabled();d["audioReady"]=audioReady();d["muted"]=audioMuted();d["volume"]=audioVolume();d["alertsPlayed"]=audioPlayed();d["audioFailures"]=audioFailed();d["configured"]=configured;d["wifi"]=WiFi.status()==WL_CONNECTED;
+                JsonDocument d;d["firmware"]="quotapanel-0.1.0-alpha.3";d["standalone"]=nativeEnabled();d["audioReady"]=audioReady();d["muted"]=audioMuted();d["rotation"]=lcd.getRotation();d["volume"]=audioVolume();d["alertsPlayed"]=audioPlayed();d["audioFailures"]=audioFailed();d["configured"]=configured;d["wifi"]=WiFi.status()==WL_CONNECTED;
                 d["ip"]=WiFi.localIP().toString();d["rssi"]=WiFi.RSSI();d["heap"]=ESP.getFreeHeap();d["psramFree"]=ESP.getFreePsram();d["uptime"]=millis()/1000;
                 xSemaphoreTake(stateLock,portMAX_DELAY);d["network"]=networkState;d["transport"]=transport;d["packetAge"]=packet.isEmpty()?-1:(int)((millis()-packetAt)/1000);xSemaphoreGive(stateLock);
                 serializeJson(d,Serial);Serial.println();
@@ -318,7 +320,7 @@ void serialCommands() {
 void setup() {
     Serial.begin(115200);Serial.setTxTimeoutMs(100);
     stateLock=xSemaphoreCreateMutex();
-    lcd.init();lcd.setRotation(1);lcd.setBrightness(190);
+    lcd.init();lcd.setRotation(3);lcd.setBrightness(190);
     canvas.setColorDepth(16);canvas.setPsram(true);
     if(!canvas.createSprite(320,240)){lcd.fillScreen(TFT_RED);while(true)delay(1000);}
     pinMode(XZ_BOOT_KEY,INPUT_PULLUP);

@@ -13,51 +13,8 @@ HORIZONS = ((900, 0.55), (3600, 0.30), (21600, 0.10), (86400, 0.05))
 MAX_GAP = 600
 
 
-def estimate(samples, remaining, reset, now):
-    result = {
-        "state": "learning",
-        "seconds": None,
-        "lowSeconds": None,
-        "highSeconds": None,
-        "rate": None,
-        "confidence": "LOW",
-        "asOf": int(now),
-        "coverageSeconds": 0,
-        "pointsConsumed": 0,
-        "resetFirst": False,
-        "resetPossible": False,
-    }
-    if remaining is None or not math.isfinite(remaining):
-        result["state"] = "unavailable"
-        return result
-    if remaining <= 0:
-        result.update(state="exhausted", seconds=0)
-        return result
-    if reset is not None and reset <= now:
-        result["state"] = "reset_pending"
-        return result
-    # Last observation per timestamp, ordered; clip to the last 24h.
-    ordered = sorted(
-        {
-            float(t): float(u)
-            for t, u in samples
-            if now - 86400 <= t <= now
-            and math.isfinite(t)
-            and math.isfinite(u)
-            and 0 <= u <= 100
-        }.items()
-    )
-    if not ordered or now - ordered[-1][0] > 90:
-        result["state"] = "stale"
-        return result
-    # Never attribute a reset, correction, or unobserved gap to current burn.
-    segment = []
-    for sample in ordered:
-        if segment and (
-            sample[0] - segment[-1][0] > MAX_GAP or sample[1] < segment[-1][1]
-        ):
-            segment = []
-        segment.append(sample)
+def _current(segment, remaining, reset, now):
+    result = _empty(now)
     if len(segment) < 2:
         return result
     end, used = segment[-1]
@@ -92,12 +49,10 @@ def estimate(samples, remaining, reset, now):
             continue
         seen.add(round(start, 3))
         delta = max(0, used - before)
-        if delta < 2:
-            continue
         # Endpoint error up to one percentage point for whole-% reporting.
         rate = delta * 3600 / elapsed
         error = 3600 / elapsed
-        quality = min(1, elapsed / horizon) * min(1, max(1, delta) / 3)
+        quality = min(1, elapsed / horizon)
         candidates.append((rate, max(0, rate - error), rate + error, weight * quality))
     if not candidates:
         return result
@@ -122,14 +77,90 @@ def estimate(samples, remaining, reset, now):
     until_reset = reset - now if reset else None
     result.update(
         state="estimate",
-        seconds=round(seconds),
-        lowSeconds=round(low),
-        highSeconds=round(high) if high is not None else None,
-        rate=round(rate, 3),
+        seconds=math.floor(seconds + 0.5),
+        lowSeconds=math.floor(low + 0.5),
+        highSeconds=math.floor(high + 0.5) if high is not None else None,
+        rate=math.floor(rate * 1000 + 0.5) / 1000,
         confidence=confidence,
         resetFirst=until_reset is not None and low >= until_reset,
         resetPossible=until_reset is not None and seconds >= until_reset,
     )
+    return result
+
+
+def _empty(now):
+    return {
+        "state": "learning",
+        "seconds": None,
+        "lowSeconds": None,
+        "highSeconds": None,
+        "rate": None,
+        "confidence": "LOW",
+        "asOf": int(now),
+        "coverageSeconds": 0,
+        "pointsConsumed": 0,
+        "resetFirst": False,
+        "resetPossible": False,
+        "historical": False,
+        "historyAgeSeconds": 0,
+    }
+
+
+def estimate(samples, remaining, reset, now):
+    result = _empty(now)
+    if remaining is None or not math.isfinite(remaining) or remaining > 100:
+        result["state"] = "unavailable"
+        return result
+    if remaining <= 0:
+        result.update(state="exhausted", seconds=0)
+        return result
+    if reset and reset <= now:
+        result["state"] = "reset_pending"
+        return result
+    ordered = sorted(
+        {
+            float(t): float(u)
+            for t, u in samples
+            if math.isfinite(t)
+            and math.isfinite(u)
+            and now - 86400 <= t <= now
+            and 0 <= u <= 100
+        }.items()
+    )
+    if not ordered or now - ordered[-1][0] > 90:
+        result["state"] = "stale"
+        return result
+    segments = [[]]
+    for sample in ordered:
+        if segments[-1]:
+            previous = segments[-1][-1]
+            if sample[1] < previous[1]:
+                segments = [[]]
+            elif sample[0] - previous[0] > MAX_GAP:
+                segments.append([])
+        segments[-1].append(sample)
+    result = _current(segments[-1], remaining, reset, now)
+    if result["state"] != "learning":
+        return result
+    for prior in reversed(segments[:-1]):
+        age = now - prior[-1][0]
+        if age > 21600:
+            break
+        old = _current(prior, remaining, None, prior[-1][0])
+        if old["state"] == "no_burn":
+            break
+        if old["seconds"] is None:
+            continue
+        uncertainty = 1 + age / 3600
+        old.update(
+            asOf=int(now), historical=True, historyAgeSeconds=int(age), confidence="LOW"
+        )
+        old["lowSeconds"] = math.floor(old["lowSeconds"] / uncertainty)
+        if old["highSeconds"] is not None:
+            old["highSeconds"] = math.ceil(old["highSeconds"] * uncertainty)
+        old["resetFirst"] = bool(reset and old["lowSeconds"] >= reset - now)
+        old["resetPossible"] = bool(reset and old["seconds"] >= reset - now)
+        return old
     return result
 
 

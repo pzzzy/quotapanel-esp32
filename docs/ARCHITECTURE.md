@@ -22,7 +22,7 @@ Refresh runs before token expiry or after an HTTP 401. Before submitting a rotat
 
 Flash layout: settings NVS at 0x9000 (20 KiB), factory application at 0x10000 (2 MiB), accounts NVS at 0x210000 (64 KiB), history at 0x220000 (64 KiB). The remainder of 16 MiB is unused by this application. Updating those application regions does not scrub old data elsewhere. There is no OTA partition in this alpha.
 
-The journal uses fixed-size records, checksums, readback verification, and periodic checkpoints plus significant changes. Its checksum detects accidental corruption, not tampering. Warning baselines persist separately. Fine-grained live history uses PSRAM; the forecast considers at most 24 hours.
+The journal retains the original 32-byte record layout and 64 KiB partition so upgrades preserve saved history. It verifies checksums and write readback, checkpoints every five minutes, saves changes of at least one percentage point at most once per minute, and saves resets/decreases immediately. A sudden power loss can lose up to five minutes of observations. Reboot recovery ignores corrupt/torn records; occupied partial records cause the next append to move to a fresh sector. The ring erases the oldest sector when full and handles sequence-number rollover. Its checksum detects accidental corruption, not tampering. Flash errors leave live observations usable, trigger retries on later polls, and surface as `historyHealthy: false` and a details-screen warning. Warning baselines persist separately. Fine-grained live history uses PSRAM; the forecast considers at most 24 hours, subject to the shared journal capacity and number of windows.
 
 ## Runway estimate
 
@@ -31,11 +31,14 @@ The model measures allowance percentage points, not tokens or money. Each allowa
 1. Reject invalid readings, deduplicate timestamps, and restrict history to the last 24 hours.
 2. Start a fresh segment after a decrease in used allowance, a reset/correction, or an unobserved gap over 10 minutes. A latest reading older than 90 seconds is stale.
 3. Require at least 10 minutes and two percentage points of observed consumption. An hour with less than one point consumed is reported as no recent burn.
-4. Estimate rates over 15 minutes, 1 hour, 6 hours and 24 hours, weighted 55%, 30%, 10%, 5%. Down-weight incomplete windows and small changes; avoid duplicate baselines.
+4. Estimate rates over 15 minutes, 1 hour, 6 hours and 24 hours, weighted 55%, 30%, 10%, 5%. Down-weight incomplete windows and avoid duplicate baselines. Once the segment has two points of evidence, include zero/one-point recent horizons so a slowdown reduces the burn rate; their quantization uncertainty may leave the upper runway bound unknown.
 5. Divide remaining allowance by the weighted rate. Bound the result using disagreement between horizons and a one-point endpoint quantization allowance. Bounds are sensitivity ranges, not statistical confidence intervals.
-6. Confidence rises only with longer history, more consumed allowance, agreement between rates, and a forecast not too far beyond the observed history. Compare the range and point estimate with the scheduled reset to indicate when a reset may arrive first.
+6. After a gap, require a fresh current reading but allow a usable prior segment from the same account/window/reset epoch, no older than six hours, while the new segment learns. Apply its rate to the **current** remaining allowance; never turn an unobserved jump into an instantaneous burn rate. Label this `HISTORY` / `PAST`, force low confidence, and widen its sensitivity bounds by `1 + age_in_hours`. A decrease clears all earlier slopes, even across a gap. One hour of observed quiet returns “no recent burn” instead of reviving a past busy period. These age limits and bounds are conservative heuristics, not measured prediction probabilities.
+7. Confidence rises only with longer history, more consumed allowance, agreement between rates, and a forecast not too far beyond the observed history. Compare the range and point estimate with the scheduled reset to indicate when a reset may arrive first.
 
 This responds to a new workload faster than a lifetime average without pretending that quantized quota reports are precise telemetry. It cannot predict future workload choices, changed server limits, or credits-to-usage conversion. Credits and banked resets are shown separately, not added to the runway. Accuracy has been checked through deterministic cases and C++/Python parity, not a calibrated real-world forecasting study.
+
+The LCD and touch mapping both default to the landscape orientation rotated 180° from alpha.2. Every boot starts unmuted; mute is session-only. Volume and alert warning latches remain persistent, so rebooting does not replay an already delivered threshold warning.
 
 ## Alerts and bank expiration
 

@@ -20,10 +20,10 @@ def main():
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip()
     except (OSError, subprocess.CalledProcessError):
-        revision = "v0.1.0-alpha.2"
+        revision = "v0.1.0-alpha.3"
     meta = {
         "project": "QuotaPanel ESP32",
-        "version": "0.1.0-alpha.2",
+        "version": "0.1.0-alpha.3",
         "chip": "esp32s3",
         "flashBytes": 16777216,
         "sourceRevision": revision,

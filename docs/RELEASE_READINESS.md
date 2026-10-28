@@ -1,5 +1,12 @@
 # Release readiness
 
+## Alpha.3 display defaults and runway persistence
+
+The update boots in flipped landscape orientation with sound enabled at the saved volume. Both accounts returned live after verified flashing; more than 12 hours of existing forecast coverage survived the upgrade. The history record format and partition layout are unchanged.
+
+45 host tests pass, including 370 C++/Python estimator comparisons and a production-journal harness under address/undefined-behavior sanitizers. The journal tests cover all 32 partial-record write lengths, corruption, sector and sequence rollover, storage failures, account/cycle isolation, and forecast reconstruction after reboot. Historical fallback and its uncertainty are heuristic; this is not a calibrated prediction-accuracy claim. See the release notes for the final physical display/touch and reboot observations.
+
+
 **Suitable for an experimental open-source alpha on the documented board. Not yet a general-purpose appliance or stable release.**
 
 ## 0.1.0-alpha.2 recovery correction

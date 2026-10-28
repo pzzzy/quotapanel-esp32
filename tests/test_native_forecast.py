@@ -45,6 +45,23 @@ class NativeForecast(unittest.TestCase):
             ),
             ([(now - 600, 50), (now - 600, 20), (now, 30)], 70, now - 1),
         ]
+        # Explicit fallback, correction, expiry, quiet and resumed-rate cases.
+        for gap in (601, 900, 3600, 21600, 21601):
+            prior = [
+                (now - gap - 10800 + i, 10 + i / 360) for i in range(0, 10801, 300)
+            ]
+            for used in (1, 40, 50):
+                cases.append((prior + [(now, used)], 100 - used, now + 86400))
+        prior = [(now - 8100 - 10800 + i, 10 + i / 360) for i in range(0, 10801, 300)]
+        quiet = [(now - 4500 + i, 50) for i in range(0, 3601, 300)]
+        cases.append((prior + quiet + [(now, 50)], 50, now + 86400))
+        cases.append(
+            (
+                prior + [(now - 900 + i, 50 + i / 300) for i in range(0, 901, 30)],
+                47,
+                now + 86400,
+            )
+        )
         with tempfile.TemporaryDirectory() as tmp:
             exe = str(Path(tmp) / "forecast")
             subprocess.run(
@@ -87,6 +104,8 @@ class NativeForecast(unittest.TestCase):
             self.assertEqual(int(v[6]), e["coverageSeconds"])
             self.assertEqual(v[7] == "1", e["resetFirst"])
             self.assertEqual(v[8] == "1", e["resetPossible"])
+            self.assertEqual(v[9] == "1", e["historical"])
+            self.assertEqual(int(v[10]), e["historyAgeSeconds"])
 
 
 if __name__ == "__main__":
