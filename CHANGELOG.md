@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.3
+
+- Rotate the default display 180° with matching touch coordinates. Boot unmuted at the saved volume; mute lasts until reboot.
+- Include recent quiet/low-consumption horizons in the runway rate so slowdowns are reflected earlier.
+- Reuse recent saved trends after an offline gap, clearly labeled as past pace with low confidence and wider age-dependent bounds. Require fresh allowance data; discard pre-correction slopes and expire fallback trends after six hours.
+- Preserve the existing history format; checkpoint significant usage changes sooner. Exercise the production journal against reboot, all partial-write lengths, corruption, sector wrap, sequence wrap and storage failures. Surface history-save failures without discarding live readings.
+
 ## 0.1.0-alpha.2
 
 - Fix usage retrieval after a server certificate rotates from Let's Encrypt to another Mozilla-trusted authority. Embed a pinned, reproducible full CA bundle with provenance and regeneration checks.

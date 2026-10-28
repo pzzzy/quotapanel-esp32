@@ -15,7 +15,7 @@ A standalone desk display for two ChatGPT/Codex accounts: allowance, credits, ba
 - Shows remaining included allowance, subscription credits, banked reset count, and earliest returned expiration.
 - Estimates time until included allowance is exhausted using recent and historical consumption. Shows confidence and a sensitivity range; estimates are conditional on future usage continuing at a similar pace.
 - Announces 10%, 5%, exhaustion, detected resets, inferred banked-reset use, and newly gained resets. Speech and chimes are embedded and work offline.
-- Keeps history and warning latches through reboot. Tap the speaker to mute; hold BOOT for 1.5 seconds to toggle sound.
+- Keeps history and warning latches through reboot. Boots with sound on at the saved volume. Tap the speaker to mute until reboot; hold BOOT for 1.5 seconds to toggle sound.
 
 Credits are subscription/Codex credits, **not dollars or OpenAI API billing credits**. The firmware does not buy credits, redeem resets, send prompts, or run models.
 
@@ -87,6 +87,8 @@ python tools/quotapanel.py ports
 This alpha uses the internal `/backend-api/wham/usage` and `/backend-api/wham/rate-limit-reset-credits` interfaces and Codex's public native OAuth client flow. These are not a supported third-party subscription API contract. Authentication or response changes can require firmware maintenance.
 
 Tokens are stored in device flash. **Flash encryption and secure boot are not enabled.** Physical access can expose credentials. An interrupted or ambiguous token rotation requires a fresh browser login; the firmware does not risk replaying an uncertain refresh token. See [security](SECURITY.md).
+
+The display defaults to the flipped landscape orientation (180° from alpha.2), with matching touch coordinates. After a brief reboot, saved history continues the forecast. After a longer gap, a recent saved trend can appear as `HISTORY` / `PAST` with low confidence until fresh observations establish the current pace. Trends older than six hours are not used for this fallback.
 
 Banked-reset use is inferred from correlated count/usage changes, with known expirations suppressed. The server provides no redemption event stream. Forecast ranges are sensitivity bounds, not calibrated probabilities. Credit balances and banked resets are not converted into extra runway. Details are in [architecture and estimation](docs/ARCHITECTURE.md).
 

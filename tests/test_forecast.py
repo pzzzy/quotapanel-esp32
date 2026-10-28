@@ -46,7 +46,11 @@ class TestForecast(unittest.TestCase):
 
     def test_offline_jump_is_not_an_instantaneous_rate(self):
         f = estimate(ramp() + [(T + 3600, 70)], 30, T + 86400, T + 3600)
-        self.assertEqual(f["state"], "learning")
+        self.assertEqual(f["state"], "estimate")
+        self.assertTrue(f["historical"])
+        self.assertEqual(f["confidence"], "LOW")
+        self.assertEqual(f["rate"], 10)
+        self.assertEqual(f["seconds"], 3 * 3600)
 
     def test_stale_and_unknown(self):
         self.assertEqual(estimate(ramp(), 60, T + 86400, T + 200)["state"], "stale")
@@ -73,6 +77,52 @@ class TestForecast(unittest.TestCase):
         self.assertEqual(estimate(ramp(), 60, T - 1, T)["state"], "reset_pending")
         f = estimate(ramp() + [(T + 10000, 100)], 60, T + 86400, T)
         self.assertAlmostEqual(f["rate"], 10, places=2)
+
+    def test_recent_slowdown_reduces_rate_before_one_hour(self):
+        points = ramp() + [(T + i, 40) for i in range(60, 1860, 60)]
+        f = estimate(points, 60, T + 86400, T + 1800)
+        self.assertLess(f["rate"], 4)
+        self.assertGreater(f["seconds"], 15 * 3600)
+        self.assertIsNone(f["highSeconds"])
+        self.assertFalse(f["historical"])
+
+    def test_history_fallback_expires_and_needs_fresh_reading(self):
+        f = estimate(ramp() + [(T + 21601, 60)], 40, T + 86400, T + 21601)
+        self.assertEqual(f["state"], "learning")
+        f = estimate(ramp(), 60, T + 86400, T + 3600)
+        self.assertEqual(f["state"], "stale")
+
+    def test_correction_across_gap_never_reuses_previous_rate(self):
+        f = estimate(ramp() + [(T + 3600, 1)], 99, T + 86400, T + 3600)
+        self.assertEqual(f["state"], "learning")
+        self.assertFalse(f["historical"])
+
+    def test_historical_range_widens_with_age(self):
+        young = estimate(ramp() + [(T + 900, 50)], 50, T + 86400, T + 900)
+        old = estimate(ramp() + [(T + 7200, 50)], 50, T + 86400, T + 7200)
+        self.assertEqual(old["seconds"], young["seconds"])
+        self.assertLess(old["lowSeconds"], young["lowSeconds"])
+        self.assertGreater(old["highSeconds"], young["highSeconds"])
+        self.assertEqual(old["historyAgeSeconds"], 7200)
+
+    def test_fresh_trend_replaces_saved_history(self):
+        points = ramp() + [(T + 3600 + i, 50 + i / 300) for i in range(0, 901, 30)]
+        f = estimate(points, 47, T + 86400, T + 4500)
+        self.assertFalse(f["historical"])
+        self.assertAlmostEqual(f["rate"], 12)
+
+    def test_idle_after_resume_does_not_keep_historical_burn(self):
+        points = ramp() + [(T + 3600 + i, 50) for i in range(0, 3601, 30)]
+        f = estimate(points, 50, T + 86400, T + 7200)
+        self.assertEqual(f["state"], "no_burn")
+        self.assertFalse(f["historical"])
+
+    def test_last_quiet_segment_blocks_older_busy_fallback(self):
+        points = ramp() + [(T + 3600 + i, 50) for i in range(0, 3601, 300)]
+        points += [(T + 8100, 50)]
+        f = estimate(points, 50, T + 86400, T + 8100)
+        self.assertEqual(f["state"], "learning")
+        self.assertFalse(f["historical"])
 
     def test_history_persists_and_isolates_account_and_cycle(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -97,7 +97,7 @@ void worker(void*) {
 }
 void audioBegin() {
     pinMode(kAmpEnable,OUTPUT);digitalWrite(kAmpEnable,HIGH);
-    Preferences p;p.begin("oa-display",true);muted=p.getBool("muted",false);volume=p.getUInt("volume",25);p.end();
+    Preferences p;p.begin("oa-display",true);muted=false;volume=p.getUInt("volume",25);p.end();
     if(!initI2s())return;
     if(!codecEs8311Begin()){i2s_driver_uninstall(kI2sPort);return;}
     queue=xQueueCreate(8,sizeof(Alert));
@@ -109,7 +109,7 @@ bool audioQueueAlert(int type,int account) {
     if(muted.load())return true;
     Alert a{type,account};return xQueueSend(queue,&a,0)==pdTRUE;
 }
-void audioToggleMute() {muted=!muted.load();if(muted)digitalWrite(kAmpEnable,HIGH);Preferences p;p.begin("oa-display",false);p.putBool("muted",muted);p.end();}
+void audioToggleMute() {muted=!muted.load();if(muted)digitalWrite(kAmpEnable,HIGH);}
 void audioSetVolume(int percent) {volume=max(0,min(100,percent));Preferences p;p.begin("oa-display",false);p.putUInt("volume",volume);p.end();}
 bool audioMuted(){return muted.load();}
 bool audioReady(){return ready.load();}
