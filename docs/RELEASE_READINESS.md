@@ -1,5 +1,13 @@
 # Release readiness
 
+## Alpha.4 signed Wi-Fi updates
+
+54 host tests cover signed image/metadata integrity, wrong signing keys, replay/downgrade, size/version bounds, the native metadata parser, certificate-pin enforcement before credential transmission, private profile permissions, OTA migration bounds and interrupted-acknowledgement recovery without retransmission, alongside existing forecasting/journal/alert tests.
+
+Hardware testing includes USB migration with a verified private backup, unique HTTPS identity pairing, unauthorized requests, wrong certificate pins, invalid signatures, interrupted uploads, bad image hashes and a deliberately failed first boot followed by rollback. Valid updates are installed and health-confirmed over Wi-Fi. The release notes record the final 4 MiB slot tests and installed-image checksum.
+
+Existing account/history addresses are preserved. Firmware signing and accepted-release counters are application protections; hardware secure boot/flash encryption remain disabled. Exhaustive power-cut testing at every flash transaction and long-duration update-service testing remain outstanding.
+
 ## Alpha.3 display defaults and runway persistence
 
 The update boots in flipped landscape orientation with sound enabled at the saved volume. Both accounts returned live after verified flashing; more than 12 hours of existing forecast coverage survived the upgrade. The history record format and partition layout are unchanged.
@@ -44,7 +52,6 @@ Post-flash USB checks exposed a repeatable need for an explicit USB-UART reset a
 
 - One-account operation, custom labels and adjustable quiet hours.
 - A visible reauthorization-needed state with a guided setup path.
-- Signed, recoverable OTA updates (requires a deliberate partition migration).
 - Optional battery telemetry and ambient/idle dimming after validating the actual board circuitry.
 - Provider adapters with explicit, supported authentication/data contracts.
 

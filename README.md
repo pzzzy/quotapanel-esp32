@@ -96,7 +96,7 @@ Banked-reset use is inferred from correlated count/usage changes, with known exp
 
 See [release readiness](docs/RELEASE_READINESS.md) for completed checks and limits. This is an alpha, not a claim of weeks-long unattended reliability.
 
-Priorities after the first alpha: longer soak testing and interrupted-power coverage, one-account operation and custom labels, an on-device reauthorization flow, signed OTA updates, optional deployment-time flash encryption, and additional providers through explicit adapters. Bluetooth, microphone, battery telemetry, and SD features are not enabled merely because the board has them.
+Priorities after the first alpha: longer soak testing and interrupted-power coverage, one-account operation and custom labels, an on-device reauthorization flow, optional deployment-time flash encryption, and additional providers through explicit adapters. Bluetooth, microphone, battery telemetry, and SD features are not enabled merely because the board has them.
 
 ## Development
 
@@ -109,3 +109,7 @@ python tools/package_release.py
 [Contributing](CONTRIBUTING.md) · [Security reports](SECURITY.md) · [Changelog](CHANGELOG.md) · [Build and licensing details](docs/BUILD.md)
 
 Project code is GPL-3.0-only, except files with their own notices. The compact ES8311 adapter is Apache-2.0; generated speech assets are CC0-1.0. See [dependency notices](licenses/NOTICE.md). No Apple system-voice recordings, emulator ROMs, operating-system images, personal backups, or account data are distributed.
+
+## Wi-Fi firmware updates
+
+Alpha.4 adds signed, authenticated updates over encrypted local Wi-Fi, with inactive-slot writes and bootloader rollback. One USB migration and pairing is needed; future updates use `tools/wifi_update.py upload` and a signed `.qpu` release asset. The device profile stays private and no runtime bridge is required. See [setup, security and recovery](docs/WIFI_UPDATES.md).

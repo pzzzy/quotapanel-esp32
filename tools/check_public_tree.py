@@ -50,6 +50,12 @@ def main():
         if path.suffix == ".wav":
             continue
         text = path.read_text(errors="replace")
+        if (
+            path.suffix == ".json"
+            and '"certificateSha256"' in text
+            and '"token"' in text
+        ):
+            issues.append(name + ": private OTA device profile")
         for pattern, label in patterns:
             if pattern.search(text):
                 issues.append(name + ": " + label)

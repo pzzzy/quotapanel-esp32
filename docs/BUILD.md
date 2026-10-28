@@ -9,7 +9,7 @@ python -m platformio run -d firmware
 python tools/package_release.py
 ```
 
-The output is `dist/firmware`. Package only bootloader.bin, partitions.bin and firmware.bin with their manifest, SHA256SUMS and licenses. Do not distribute a full-chip readback, ELF/debug file, local cache or credentials. The flash tool checks image names, offsets, partition bounds and hashes before touching hardware, then requires a verified private backup.
+The output is `dist/firmware`. Package only bootloader.bin, partitions.bin, firmware.bin and the all-erased ota-data-reset.bin with their manifest, SHA256SUMS and licenses. The OTA reset file clears only boot-selection metadata during USB installation. Signed network bundles contain only the application plus signed metadata; see [maintainer signing](WIFI_UPDATES.md#maintainer-signing). Do not distribute a full-chip readback, ELF/debug file, local cache or credentials. The flash tool checks image names, offsets, partition bounds and hashes before touching hardware, then requires a verified private backup.
 
 ## Pinned inputs
 
@@ -40,3 +40,5 @@ Install `requirements-dev.txt` to run `python -m black --check tools tests`. CI 
 `certifi` is pinned in requirements.txt and tracked by Dependabot. After reviewing a root-store update, install the updated requirements and run `python tools/generate_ca_bundle.py`. Commit the PEM, PEM header and JSON manifest together, preserving the MPL-2.0 notice. The manifest records input/output SHA-256, source version and root subjects. `python tools/generate_ca_bundle.py --check` and the test suite reject stale generated data. The generator uses cryptography, installed with esptool. Complete certificates are intentional: the old SDK compact verifier cannot build some cross-signed paths correctly. TLS allocation uses the supported board's PSRAM; the application remains within its 2 MiB partition.
 
 On hardware, `python tools/quotapanel.py tls-check` sends unauthenticated requests to the two service hosts and expired/wrong-host/self-signed badssl test endpoints. Valid service hosts must reach HTTP; all three invalid-certificate endpoints must fail with a TLS verification error. Do not treat DNS/TCP failure as proof of certificate rejection. Diagnostic endpoints never receive account tokens.
+
+The build targets the 4 MiB OTA slot. Use the verified flash tool rather than raw PlatformIO upload. A USB factory/recovery bundle must still fit 2 MiB and packaging rejects larger applications. Future applications over 2 MiB can be signed for Wi-Fi installation while retaining the last compatible USB recovery bundle; do not enlarge the factory partition across the accounts partition.

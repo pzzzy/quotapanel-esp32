@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Standalone HTTPS polling, authentication and bounded recovery.
 #include "native_client.h"
+#include "wifi_update.h"
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include "verified_tls.h"
@@ -21,10 +22,14 @@
 
 namespace {
 QueueHandle_t jobs;
-SemaphoreHandle_t lock;
+SemaphoreHandle_t lock,updateLock;
+struct ActivityGuard {
+    ActivityGuard(){xSemaphoreTake(updateLock,portMAX_DELAY);}
+    ~ActivityGuard(){xSemaphoreGive(updateLock);}
+};
 String result = "{\"state\":\"idle\"}";
 String commandResult=result;bool inCommand=false;
-std::atomic<bool> cancelled{false};
+std::atomic<bool> cancelled{false},updatePause{false},updateLockHeld{false};
 const char* CLIENT_ID="app_EMoamEEZ73f0CkXaXp7hrann";
 String browserVerifier,browserState,browserExpected;int browserSlot=-1;uint32_t browserStarted=0;
 std::atomic<bool> enabled{false};
@@ -281,6 +286,7 @@ void pollAccounts(){
             for(const char* key:{"endpoint","http","elapsedMs","tlsError","tlsMessage","httpError","retryAfter","verificationFlags"})if(!r[key].isNull())item[key]=r[key];
         }
     }
+    wifiUpdateAccountHealth(all);
     pollCount++;if(!all){pollFailures++;consecutiveFailures++;}else consecutiveFailures=0;
     uint32_t waitMs=all?30000:recovery::retryMs(consecutiveFailures,retryAfter);
     nextPoll=all&&millis()-pollStarted<waitMs?pollStarted+waitMs:millis()+(all?1000:waitMs);
@@ -295,6 +301,9 @@ void pollAccounts(){
 void worker(void*) {
     bool wasOnline=false;
     for(;;) {
+        if(updatePause.load()){vTaskDelay(pdMS_TO_TICKS(100));continue;}
+        ActivityGuard activity;
+        if(updatePause.load())continue;
         bool online=WiFi.status()==WL_CONNECTED;
         if(online&&!wasOnline){nextPoll=millis();consecutiveFailures=0;}
         wasOnline=online;
@@ -375,11 +384,11 @@ void nativeClientBegin() {
     mbedtls_platform_set_calloc_free(
         [](size_t n,size_t bytes)->void*{return heap_caps_calloc(n,bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);},
         heap_caps_free);
+    updateLock=xSemaphoreCreateMutex();
     lock=xSemaphoreCreateMutex();jobs=xQueueCreate(1,sizeof(String*));
     esp_err_t err=nvs_flash_init_partition("accounts");
-    if(err==ESP_ERR_NVS_NO_FREE_PAGES||err==ESP_ERR_NVS_NEW_VERSION_FOUND){
-        if(nvs_flash_erase_partition("accounts")==ESP_OK)err=nvs_flash_init_partition("accounts");
-    }
+    // Never erase account sessions or OTA identity to recover an NVS error.
+    // A failed upgrade must leave the previous firmware's data recoverable.
     storageReady=err==ESP_OK;
     // Migrate only the independent sessions created by the earlier hardware test.
     // Verify both copies before releasing their old settings-space allocation.
@@ -408,4 +417,14 @@ String nativeClientCommand(const String &command) {
     xSemaphoreTake(lock,portMAX_DELAY);commandResult="{\"state\":\"queued\"}";xSemaphoreGive(lock);
     if(xQueueSend(jobs,&job,0)!=pdTRUE){delete job;return "ERROR NATIVE BUSY";}
     return "OK NATIVE QUEUED";
+}
+
+bool nativePauseForUpdate(uint32_t timeoutMs){
+    updatePause=true;
+    bool acquired=updateLock&&xSemaphoreTake(updateLock,pdMS_TO_TICKS(timeoutMs))==pdTRUE;
+    updateLockHeld=acquired;if(!acquired)updatePause=false;return acquired;
+}
+void nativeResumeAfterUpdate(){
+    if(updateLockHeld.exchange(false))xSemaphoreGive(updateLock);
+    updatePause=false;
 }

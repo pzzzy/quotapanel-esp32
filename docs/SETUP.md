@@ -1,6 +1,6 @@
 # Setup and recovery
 
-Follow the root README in order: install Python 3.11+, back up and flash, configure Wi-Fi, pair both accounts, then enable. Only initial setup, maintenance and reauthorization require a computer. Normal polling, TLS, refresh, forecasting, display updates and audio run on the ESP32.
+Follow the root README in order: install Python 3.11+, back up and flash, configure Wi-Fi, pair both accounts, then enable. Initial setup and reauthorization require USB. Once paired, firmware maintenance can use signed Wi-Fi updates; see [Wi-Fi updates](WIFI_UPDATES.md). Normal polling, TLS, refresh, forecasting, display updates and audio run on the ESP32.
 
 ## USB and Wi-Fi
 

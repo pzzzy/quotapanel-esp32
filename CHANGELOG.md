@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.4
+
+- Add signed Wi-Fi updates using certificate-pinned HTTPS, device-specific authorization, ECDSA P-256 image signatures and monotonically increasing release sequences.
+- Stage in inactive OTA slots; verify signed metadata, streamed hash and ESP image integrity before activation. Require successful application health checks before confirming the new boot; retain bootloader rollback and a loop watchdog.
+- Pause account operations under a mutex before update-triggered reboot so token rotation can finish. Preserve account/history addresses and fail closed on account-storage initialization errors.
+- Add USB pairing, Wi-Fi status/upload and maintainer signing tools. USB migration initializes OTA metadata without erasing credentials or history.
+
 ## 0.1.0-alpha.3
 
 - Rotate the default display 180° with matching touch coordinates. Boot unmuted at the saved volume; mute lasts until reboot.
@@ -24,4 +31,4 @@ First public experimental release of QuotaPanel ESP32.
 - Persistent alerts for 10%, 5%, exhaustion, reset, inferred bank use and bank gain; redistributable offline speech and chimes.
 - Portable USB tools, verified backup/flash/restore flow, pinned builds, tests, dependency notices and explicit hardware documentation.
 
-Known limits: one tested board variant, two accounts required, internal endpoint dependency, unencrypted credential storage, no OTA, no long-duration reliability claim. See docs/RELEASE_READINESS.md.
+Known limits: one tested board variant, two accounts required, internal endpoint dependency, unencrypted credential storage, no OTA in alpha.1, no long-duration reliability claim. See docs/RELEASE_READINESS.md.
