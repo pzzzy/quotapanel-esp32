@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Package only allowlisted firmware files; never include device flash or NVS."""
 
-import argparse, hashlib, json, shutil, subprocess
+import argparse, hashlib, json, shutil, subprocess, re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,10 +20,20 @@ def main():
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip()
     except (OSError, subprocess.CalledProcessError):
-        revision = "v0.1.0-alpha.3"
+        revision = None
+    version_header = (ROOT / "firmware/src/firmware_version.h").read_text()
+    version = re.search(r'#define QP_VERSION "([^"]+)"', version_header)[1]
+    sequence = int(re.search(r"#define QP_SEQUENCE ([0-9]+)u", version_header)[1])
+    revision = revision or "v" + version
+    if (build / "firmware.bin").stat().st_size > 0x200000:
+        raise RuntimeError(
+            "Image exceeds the 2 MiB factory slot. Distribute a signed OTA image (up to 4 MiB) and retain the existing USB recovery bundle."
+        )
     meta = {
         "project": "QuotaPanel ESP32",
-        "version": "0.1.0-alpha.3",
+        "version": version,
+        "releaseSequence": sequence,
+        "layout": "ota-v1",
         "chip": "esp32s3",
         "flashBytes": 16777216,
         "sourceRevision": revision,
@@ -33,8 +43,13 @@ def main():
         ("bootloader.bin", 0),
         ("partitions.bin", 0x8000),
         ("firmware.bin", 0x10000),
+        ("ota-data-reset.bin", 0x230000),
     ]:
-        data = (build / name).read_bytes()
+        data = (
+            b"\xff" * 8192
+            if name == "ota-data-reset.bin"
+            else (build / name).read_bytes()
+        )
         # Precompiled Espressif newlib archives retain their upstream public
         # builder paths. Reject this build machine's paths; never patch binaries.
         for private_path in (Path.home(), ROOT):

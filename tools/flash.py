@@ -96,6 +96,8 @@ def verify_backup(directory):
 def verify_bundle(directory):
     meta = json.loads((directory / "manifest.json").read_text())
     expected = {"bootloader.bin": 0, "partitions.bin": 0x8000, "firmware.bin": 0x10000}
+    if meta.get("layout") == "ota-v1":
+        expected["ota-data-reset.bin"] = 0x230000
     if (
         meta.get("chip") != "esp32s3"
         or meta.get("flashBytes") != SIZE
@@ -107,6 +109,7 @@ def verify_bundle(directory):
         "bootloader.bin": 0x8000,
         "partitions.bin": 0x1000,
         "firmware.bin": 0x200000,
+        "ota-data-reset.bin": 0x2000,
     }
     for name, offset in expected.items():
         entry = meta["files"][name]
@@ -118,6 +121,8 @@ def verify_bundle(directory):
             or hashlib.sha256(path.read_bytes()).hexdigest() != entry["sha256"]
         ):
             raise RuntimeError("Release checksum/offset mismatch: " + name)
+        if name == "ota-data-reset.bin" and path.read_bytes() != b"\xff" * 8192:
+            raise RuntimeError("OTA reset must contain only erased bytes")
         args.extend([hex(offset), str(path)])
     return args
 

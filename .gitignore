@@ -16,3 +16,5 @@ __pycache__/
 *full-flash*
 *.sqlite*
 .DS_Store
+*.qpu
+*ota-device*.json

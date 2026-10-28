@@ -7,6 +7,9 @@
 #include "board_display.h"
 #include "alerts_audio.h"
 #include "native_client.h"
+#include "wifi_update.h"
+#include "firmware_version.h"
+#include <esp_task_wdt.h>
 
 XiaozhiDisplay lcd;
 lgfx::LGFX_Sprite canvas(&lcd);
@@ -219,6 +222,7 @@ void draw() {
             }else {text((nativeEnabled()?"DIRECT ":"SYNC ")+age+" AGO",12,232,MUTED);right("TAP ACCOUNT FOR DETAILS",308,232,MUTED);}
         }
     }
+    if(wifiUpdateBusy()){canvas.fillRect(0,226,320,14,BG);text("INSTALLING UPDATE - KEEP POWER ON",12,232,AMBER);}
     canvas.pushSprite(0,0);
 }
 void touch() {
@@ -279,10 +283,12 @@ void serialCommands() {
                 else Serial.println("ERROR CHUNK");
             } else if(line=="NCOMMIT") {
                 uint32_t hash=2166136261u;for(size_t i=0;i<transfer.length();i++)hash=(hash^(uint8_t)transfer[i])*16777619u;
-                if(transferLength&&transfer.length()==transferLength&&hash==transferHash){if(transfer.startsWith("CONFIG "))configure(transfer.substring(7));else Serial.println(nativeClientCommand(transfer));}else Serial.println("ERROR TRANSFER");
+                if(transferLength&&transfer.length()==transferLength&&hash==transferHash){if(transfer.startsWith("CONFIG "))configure(transfer.substring(7));else if(transfer.startsWith("OTA SETUP "))Serial.println(wifiUpdateConfigure(transfer.substring(10))?"OK OTA SETUP":"ERROR OTA SETUP");else Serial.println(nativeClientCommand(transfer));}else Serial.println("ERROR TRANSFER");
                 transfer="";transferLength=0;
+            } else if(line=="OTA STATUS") {
+                JsonDocument d;wifiUpdateStatus(d.to<JsonObject>());serializeJson(d,Serial);Serial.println();
             } else if(line=="STATUS") {
-                JsonDocument d;d["firmware"]="quotapanel-0.1.0-alpha.3";d["standalone"]=nativeEnabled();d["audioReady"]=audioReady();d["muted"]=audioMuted();d["rotation"]=lcd.getRotation();d["volume"]=audioVolume();d["alertsPlayed"]=audioPlayed();d["audioFailures"]=audioFailed();d["configured"]=configured;d["wifi"]=WiFi.status()==WL_CONNECTED;
+                JsonDocument d;d["firmware"]="quotapanel-" QP_VERSION;d["standalone"]=nativeEnabled();d["audioReady"]=audioReady();d["muted"]=audioMuted();d["rotation"]=lcd.getRotation();d["volume"]=audioVolume();d["alertsPlayed"]=audioPlayed();d["audioFailures"]=audioFailed();d["configured"]=configured;d["wifi"]=WiFi.status()==WL_CONNECTED;
                 d["ip"]=WiFi.localIP().toString();d["rssi"]=WiFi.RSSI();d["heap"]=ESP.getFreeHeap();d["psramFree"]=ESP.getFreePsram();d["uptime"]=millis()/1000;
                 xSemaphoreTake(stateLock,portMAX_DELAY);d["network"]=networkState;d["transport"]=transport;d["packetAge"]=packet.isEmpty()?-1:(int)((millis()-packetAt)/1000);xSemaphoreGive(stateLock);
                 serializeJson(d,Serial);Serial.println();
@@ -318,6 +324,7 @@ void serialCommands() {
     }
 }
 void setup() {
+    esp_task_wdt_init(30,true);enableLoopWDT();
     Serial.begin(115200);Serial.setTxTimeoutMs(100);
     stateLock=xSemaphoreCreateMutex();
     lcd.init();lcd.setRotation(3);lcd.setBrightness(190);
@@ -334,13 +341,14 @@ void setup() {
 
     audioBegin();
     nativeClientBegin();
+    wifiUpdateBegin();
     configured=ssid.length()>0;
     setenv("TZ",displayTimezone.c_str(),1);tzset();
     if(configured)xTaskCreatePinnedToCore(networkTask,"wifi",4096,nullptr,1,nullptr,0);
     draw();Serial.println("USAGE DISPLAY READY");
 }
 void loop() {
-    serialCommands();touch();
+    wifiUpdateTick();serialCommands();touch();
     static bool pressed=false,longPress=false;static uint32_t pressedAt=0;
     bool key=digitalRead(XZ_BOOT_KEY)==LOW;
     if(key&&!pressed){pressedAt=millis();longPress=false;}
