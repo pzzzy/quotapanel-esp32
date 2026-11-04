@@ -9,6 +9,7 @@
 #include "native_client.h"
 #include "wifi_update.h"
 #include "firmware_version.h"
+#include "battery_monitor.h"
 #include <esp_task_wdt.h>
 
 XiaozhiDisplay lcd;
@@ -20,6 +21,7 @@ String packet, transport, networkState = "STARTING";
 uint32_t packetAt = 0;
 bool configured = false;
 int detailPage = -1, detailWindow = 0;
+bool powerPage=false;
 uint64_t lastAlert=0;
 String alertBanner;uint32_t bannerUntil=0;
 uint8_t* capturedFrame=nullptr;
@@ -175,6 +177,46 @@ void speakerIcon() {
     if(audioMuted())canvas.drawLine(295,8,310,24,color);
     else {canvas.drawLine(308,12,310,15,color);canvas.drawLine(310,15,310,19,color);canvas.drawLine(310,19,308,22,color);}
 }
+uint32_t batteryColor(const battery::Reading& r){return !r.valid?MUTED:r.percentage<=5?RED:r.percentage<=15?AMBER:MINT;}
+void batteryBadge(){
+    auto r=batteryReading();uint32_t color=batteryColor(r);
+    canvas.fillRoundRect(145,5,89,23,6,CARD);
+    canvas.drawRoundRect(151,11,22,11,2,color);canvas.fillRect(173,14,2,5,color);
+    if(r.valid&&r.percentage>0)canvas.fillRect(154,14,max(1,r.percentage*16/100),5,color);
+    right(r.valid?"~"+String(r.percentage)+"%":"--",229,13,color);
+}
+void drawPower(){
+    auto r=batteryReading();uint32_t color=batteryColor(r);
+    text("< BACK",12,12,MINT);text("BATTERY",130,12,WHITE);speakerIcon();
+    canvas.drawFastHLine(12,30,296,0x293C51);
+    canvas.fillRoundRect(10,38,300,85,9,CARD);
+    text("ESTIMATED LEVEL",20,46,MUTED);text("BATTERY VOLTAGE",175,46,MUTED);
+    large(r.valid?"~"+String(r.percentage)+"%":"--",20,61,color);
+    large(r.valid?String(r.millivolts/1000,2)+"V":"--",175,61,WHITE);
+    canvas.fillRoundRect(20,96,280,3,1,0x2A3A4E);
+    if(r.valid&&r.percentage>0)canvas.fillRoundRect(20,96,max(3,r.percentage*280/100),3,1,color);
+    text(!r.valid?"CHECK BAT / ADC":r.percentage<=5?"VERY LOW":r.percentage<=15?"LOW BATTERY":"1S LiPo ESTIMATE",20,108,color);
+    String trend=!r.valid?"UNAVAILABLE":r.trend==battery::Trend::Rising?"VOLTAGE RISING":r.trend==battery::Trend::Falling?"VOLTAGE FALLING":r.trend==battery::Trend::Steady?"VOLTAGE STEADY":"LEARNING TREND";
+    right(trend,300,108,MUTED);
+    canvas.fillRoundRect(10,130,300,49,8,CARD);
+    text("VOLTAGE HISTORY",20,136,MUTED);
+    right(String(r.coverageMs/60000)+"m OBSERVED",300,136,MUTED);
+    float points[battery::Monitor::Capacity];unsigned count=batteryHistory(points,battery::Monitor::Capacity);
+    float low=5000,high=0;for(unsigned i=0;i<count;i++){low=min(low,points[i]);high=max(high,points[i]);}
+    // At least a 100 mV span prevents tiny ADC fluctuations looking dramatic.
+    float span=max(100.0f,high-low+20);float bottom=(high+low-span)/2;
+    for(unsigned i=1;i<count;i++){
+        int x0=20+(battery::Monitor::Capacity-count+i-1)*280/(battery::Monitor::Capacity-1);
+        int x1=20+(battery::Monitor::Capacity-count+i)*280/(battery::Monitor::Capacity-1);
+        int y0=175-(points[i-1]-bottom)*24/span,y1=175-(points[i]-bottom)*24/span;
+        canvas.drawLine(x0,y0,x1,y1,color);
+    }
+    text("CHARGING STATUS",14,187,MUTED);right("NOT SENSED",306,187,MUTED);
+    text("CURRENT / USB VOLTAGE",14,201,MUTED);right("NOT SENSED",306,201,MUTED);
+    text("VOLTAGE CHANGE",14,215,MUTED);
+    right(!r.valid?"UNAVAILABLE":r.trendReady?String(r.rate>=0?"+":"")+String(r.rate,1)+" mV/min":"LEARNING (~3 MIN)",306,215,r.valid?WHITE:MUTED);
+    text("% VARIES WITH LOAD, CELL AND CHARGING",12,233,MUTED);
+}
 void processAlerts(JsonDocument& doc,int64_t now) {
     bool changed=false;
     const char* types[]={"exhausted","reset","banked_used","banked_gained","warning_10","warning_5"};
@@ -196,7 +238,12 @@ void draw() {
     String body,net;uint32_t received;
     xSemaphoreTake(stateLock,portMAX_DELAY);body=packet;net=networkState;received=packetAt;xSemaphoreGive(stateLock);
     canvas.fillScreen(BG);
-    if(!configured || body.isEmpty()) {
+    if(powerPage) {
+        // Usage alerts keep running while the battery page is open.
+        if(body.length()){JsonDocument doc;deserializeJson(doc,body);processAlerts(doc,doc["now"].as<int64_t>()+(uint32_t)(millis()-received)/1000);}
+        drawPower();
+    } else if(!configured || body.isEmpty()) {
+        batteryBadge();
         text("QUOTAPANEL",20,25,MINT,2);
         large("ESP32",20,65,WHITE);
         text(configured?net:"READY TO PAIR",20,120,AMBER);
@@ -210,6 +257,7 @@ void draw() {
         if(detailPage>=0)drawDetails(doc["accounts"][detailPage],now,WiFi.status()==WL_CONNECTED && millis()-received<freshness);
         else {
             text("QUOTAPANEL",12,10,WHITE,2);
+            batteryBadge();
             bool live=net=="LIVE" && !stale(doc["accounts"][0],now) && !stale(doc["accounts"][1],now) && millis()-received<freshness;
             canvas.fillCircle(242,17,3,live?MINT:AMBER);right(live?"LIVE":"STALE",282,13,live?MINT:AMBER);speakerIcon();
             drawCard(doc["accounts"][0],0,30,now,WiFi.status()==WL_CONNECTED && millis()-received<freshness);drawCard(doc["accounts"][1],1,130,now,WiFi.status()==WL_CONNECTED && millis()-received<freshness);
@@ -235,7 +283,11 @@ void touch() {
     int rawX=((xh&15)<<8)|xl,rawY=((yh&15)<<8)|yl;
     int x=rawY,y=239-rawX;
     if(n>0 && n<=2 && !down && x>=0&&x<320&&y>=0&&y<240){
-        if(y<30 && x>100 && (detailPage<0 || x<205)){audioToggleMute();}
+        if(powerPage){if(y<30&&x>=287)audioToggleMute();else if(y<30&&x<100)powerPage=false;}
+        else if(detailPage<0&&y<30&&x>=145&&x<235){powerPage=true;}
+        else if(y<30 && ((detailPage<0&&x>=287)||(detailPage>=0&&x>100&&x<205))){audioToggleMute();}
+        else if(detailPage>=0&&y<30&&x<100){detailPage=-1;}
+        else if(y<30){} // Header labels are not account or sound buttons.
         else if(detailPage<0){detailPage=y<128?0:1;detailWindow=0;}
         else if(x>160 && y>32){detailWindow++;String body;xSemaphoreTake(stateLock,portMAX_DELAY);body=packet;xSemaphoreGive(stateLock);JsonDocument d;deserializeJson(d,body);if(d["accounts"][detailPage]["windows"].size()<=1)detailPage=-1;}
         else detailPage=-1;
@@ -340,6 +392,7 @@ void setup() {
     displayTimezone=net["timezone"]|"UTC0";lastAlert=prefs.getULong64("alertseq",0);prefs.end();
 
     audioBegin();
+    batteryBegin();
     nativeClientBegin();
     wifiUpdateBegin();
     configured=ssid.length()>0;
@@ -348,12 +401,12 @@ void setup() {
     draw();Serial.println("USAGE DISPLAY READY");
 }
 void loop() {
-    wifiUpdateTick();serialCommands();touch();
+    wifiUpdateTick();batteryTick();serialCommands();touch();
     static bool pressed=false,longPress=false;static uint32_t pressedAt=0;
     bool key=digitalRead(XZ_BOOT_KEY)==LOW;
     if(key&&!pressed){pressedAt=millis();longPress=false;}
     if(key&&pressed&&!longPress&&millis()-pressedAt>=1500){audioToggleMute();longPress=true;nextDraw=0;}
-    if(!key&&pressed&&!longPress){detailPage=detailPage<0?0:detailPage==0?1:-1;detailWindow=0;nextDraw=0;}
+    if(!key&&pressed&&!longPress){if(powerPage)powerPage=false;else{detailPage=detailPage<0?0:detailPage==0?1:-1;detailWindow=0;}nextDraw=0;}
     pressed=key;
     if((int32_t)(millis()-nextDraw)>=0){draw();nextDraw=millis()+1000;}
     delay(5);
