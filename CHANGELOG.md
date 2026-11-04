@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.6
+
+- Fix false battery percentages from the charger-driven empty BAT socket. Default to unconfirmed power and require an explicit battery-only run for percentage, runtime and warnings; revoke confirmation on suspicious readings or a connected USB host.
+- Add low-battery speech at sustained estimated 15% and 5% levels, persistent warning latches, hysteresis and a voice preview button. Respect sound settings and keep account alerts independent.
+- Estimate runtime to a 5% reserve from sustained discharge history with minimum duration/drop requirements, recent-trend validation and a broad low-confidence range. Never mix unconfirmed/charging intervals into a discharge run.
+- Add a compact mu-law battery voice while preserving existing account PCM clips. Extend native tests for ambiguous power, supply changes, runtime validity, warning persistence/hysteresis and voice encoding.
+
 ## 0.1.0-alpha.5
 
 - Add a tappable battery badge with a voltage-derived percentage estimate, measured terminal voltage, low-level colors and a ten-minute voltage sparkline.

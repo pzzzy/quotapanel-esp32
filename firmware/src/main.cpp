@@ -22,6 +22,7 @@ uint32_t packetAt = 0;
 bool configured = false;
 int detailPage = -1, detailWindow = 0;
 bool powerPage=false;
+bool powerConfirm=false;
 uint64_t lastAlert=0;
 String alertBanner;uint32_t bannerUntil=0;
 uint8_t* capturedFrame=nullptr;
@@ -177,27 +178,37 @@ void speakerIcon() {
     if(audioMuted())canvas.drawLine(295,8,310,24,color);
     else {canvas.drawLine(308,12,310,15,color);canvas.drawLine(310,15,310,19,color);canvas.drawLine(310,19,308,22,color);}
 }
-uint32_t batteryColor(const battery::Reading& r){return !r.valid?MUTED:r.percentage<=5?RED:r.percentage<=15?AMBER:MINT;}
+uint32_t batteryColor(const battery::Reading& r){return !r.valid||!r.confirmed?MUTED:r.percentage<=5?RED:r.percentage<=15?AMBER:MINT;}
 void batteryBadge(){
     auto r=batteryReading();uint32_t color=batteryColor(r);
     canvas.fillRoundRect(145,5,89,23,6,CARD);
     canvas.drawRoundRect(151,11,22,11,2,color);canvas.fillRect(173,14,2,5,color);
-    if(r.valid&&r.percentage>0)canvas.fillRect(154,14,max(1,r.percentage*16/100),5,color);
-    right(r.valid?"~"+String(r.percentage)+"%":"--",229,13,color);
+    if(r.valid&&r.confirmed&&r.percentage>0)canvas.fillRect(154,14,max(1,r.percentage*16/100),5,color);
+    right(r.valid&&r.confirmed?"~"+String(r.percentage)+"%":"BAT?",229,13,color);
 }
 void drawPower(){
     auto r=batteryReading();uint32_t color=batteryColor(r);
-    text("< BACK",12,12,MINT);text("BATTERY",130,12,WHITE);speakerIcon();
+    text("< BACK",12,12,MINT);text("POWER",130,12,WHITE);speakerIcon();
     canvas.drawFastHLine(12,30,296,0x293C51);
+    if(powerConfirm){
+        text("START A BATTERY-ONLY RUN",20,49,MINT);
+        text("Connect the battery, then unplug USB.",20,79,WHITE);
+        text("Is the battery powering the display?",20,99,WHITE);
+        text("Power cannot be detected by this board.",20,129,MUTED);
+        text("End the run when reconnecting USB.",20,149,MUTED);
+        canvas.fillRoundRect(10,184,145,40,8,CARD);text("YES, START",48,199,MINT);
+        canvas.fillRoundRect(165,184,145,40,8,CARD);text("CANCEL",218,199,MUTED);
+        return;
+    }
     canvas.fillRoundRect(10,38,300,85,9,CARD);
-    text("ESTIMATED LEVEL",20,46,MUTED);text("BATTERY VOLTAGE",175,46,MUTED);
-    large(r.valid?"~"+String(r.percentage)+"%":"--",20,61,color);
+    text("ESTIMATED LEVEL",20,46,MUTED);text(r.confirmed?"BATTERY VOLTAGE":"BAT PIN VOLTAGE",175,46,MUTED);
+    large(r.valid&&r.confirmed?"~"+String(r.percentage)+"%":"--",20,61,color);
     large(r.valid?String(r.millivolts/1000,2)+"V":"--",175,61,WHITE);
     canvas.fillRoundRect(20,96,280,3,1,0x2A3A4E);
-    if(r.valid&&r.percentage>0)canvas.fillRoundRect(20,96,max(3,r.percentage*280/100),3,1,color);
-    text(!r.valid?"CHECK BAT / ADC":r.percentage<=5?"VERY LOW":r.percentage<=15?"LOW BATTERY":"1S LiPo ESTIMATE",20,108,color);
+    if(r.valid&&r.confirmed&&r.percentage>0)canvas.fillRoundRect(20,96,max(3,r.percentage*280/100),3,1,color);
+    text(!r.confirmed?"POWER UNCONFIRMED":!r.valid?"CHECK BAT / ADC":r.percentage<=5?"VERY LOW":r.percentage<=15?"LOW BATTERY":"USER: BATTERY ONLY",20,108,color);
     String trend=!r.valid?"UNAVAILABLE":r.trend==battery::Trend::Rising?"VOLTAGE RISING":r.trend==battery::Trend::Falling?"VOLTAGE FALLING":r.trend==battery::Trend::Steady?"VOLTAGE STEADY":"LEARNING TREND";
-    right(trend,300,108,MUTED);
+    right(r.confirmed?trend:"PIN VOLTAGE ONLY",300,108,MUTED);
     canvas.fillRoundRect(10,130,300,49,8,CARD);
     text("VOLTAGE HISTORY",20,136,MUTED);
     right(String(r.coverageMs/60000)+"m OBSERVED",300,136,MUTED);
@@ -211,11 +222,13 @@ void drawPower(){
         int y0=175-(points[i-1]-bottom)*24/span,y1=175-(points[i]-bottom)*24/span;
         canvas.drawLine(x0,y0,x1,y1,color);
     }
-    text("CHARGING STATUS",14,187,MUTED);right("NOT SENSED",306,187,MUTED);
-    text("CURRENT / USB VOLTAGE",14,201,MUTED);right("NOT SENSED",306,201,MUTED);
-    text("VOLTAGE CHANGE",14,215,MUTED);
-    right(!r.valid?"UNAVAILABLE":r.trendReady?String(r.rate>=0?"+":"")+String(r.rate,1)+" mV/min":"LEARNING (~3 MIN)",306,215,r.valid?WHITE:MUTED);
-    text("% VARIES WITH LOAD, CELL AND CHARGING",12,233,MUTED);
+    auto e=batteryRuntime();
+    text("TO 5% RESERVE",14,187,MUTED);
+    right(!r.confirmed?"CONFIRM BATTERY ONLY":r.millivolts<=3500?"RESERVE REACHED":e.available?"~"+durationText(e.seconds):"LEARNING DISCHARGE",306,187,r.confirmed?WHITE:MUTED);
+    if(r.confirmed&&e.available){text("LOW CONF RANGE",14,201,MUTED);right(durationText(e.lowSeconds)+" - "+durationText(e.highSeconds),306,201,MUTED);}
+    else text(r.confirmed?"NEEDS 15+ MIN AND A MEASURABLE DROP":"CHARGE / CURRENT CANNOT BE SENSED",14,201,MUTED);
+    canvas.fillRoundRect(10,217,194,21,5,CARD);text(r.confirmed?"END BATTERY RUN":"START BATTERY RUN",48,224,r.confirmed?AMBER:MINT);
+    canvas.fillRoundRect(212,217,98,21,5,CARD);text("TEST VOICE",230,224,MUTED);
 }
 void processAlerts(JsonDocument& doc,int64_t now) {
     bool changed=false;
@@ -283,7 +296,15 @@ void touch() {
     int rawX=((xh&15)<<8)|xl,rawY=((yh&15)<<8)|yl;
     int x=rawY,y=239-rawX;
     if(n>0 && n<=2 && !down && x>=0&&x<320&&y>=0&&y<240){
-        if(powerPage){if(y<30&&x>=287)audioToggleMute();else if(y<30&&x<100)powerPage=false;}
+        if(powerPage){
+            if(y<30&&x>=287)audioToggleMute();
+            else if(y<30&&x<100){powerPage=false;powerConfirm=false;}
+            else if(powerConfirm&&y>=184&&y<=224){if(x<155){if(batterySetMode(true))powerConfirm=false;}else if(x>=165)powerConfirm=false;}
+            else if(!powerConfirm&&y>=217){
+                if(x>=212)audioQueueBatteryWarning(false,true);
+                else if(x>=10&&x<204){if(batteryReading().confirmed)batterySetMode(false);else powerConfirm=true;}
+            }
+        }
         else if(detailPage<0&&y<30&&x>=145&&x<235){powerPage=true;}
         else if(y<30 && ((detailPage<0&&x>=287)||(detailPage>=0&&x>100&&x<205))){audioToggleMute();}
         else if(detailPage>=0&&y<30&&x<100){detailPage=-1;}
@@ -406,7 +427,7 @@ void loop() {
     bool key=digitalRead(XZ_BOOT_KEY)==LOW;
     if(key&&!pressed){pressedAt=millis();longPress=false;}
     if(key&&pressed&&!longPress&&millis()-pressedAt>=1500){audioToggleMute();longPress=true;nextDraw=0;}
-    if(!key&&pressed&&!longPress){if(powerPage)powerPage=false;else{detailPage=detailPage<0?0:detailPage==0?1:-1;detailWindow=0;}nextDraw=0;}
+    if(!key&&pressed&&!longPress){if(powerPage){powerPage=false;powerConfirm=false;}else{detailPage=detailPage<0?0:detailPage==0?1:-1;detailWindow=0;}nextDraw=0;}
     pressed=key;
     if((int32_t)(millis()-nextDraw)>=0){draw();nextDraw=millis()+1000;}
     delay(5);

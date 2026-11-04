@@ -2,7 +2,7 @@
 
 `dashboard.svg` is an original illustrative dashboard using synthetic readings, released under CC0-1.0. It is not a photograph or capture of a real account.
 
-`voice/*.wav` and `firmware/src/voices.generated.h` are synthesized speech assets, released under CC0-1.0 to the extent the project holds rights in them. They use Piper 1.8.0 and the pinned `en_US-ljspeech-medium` model. No Apple/macOS system voice or recording is included.
+`voice/*.wav` and `firmware/src/voices.generated.h` are synthesized speech assets, released under CC0-1.0 to the extent the project holds rights in them. They use Piper 1.8.0 and the pinned `en_US-ljspeech-medium` model. No Apple/macOS system voice or recording is included. The battery warning is stored in firmware as 8-bit G.711 mu-law at 22,050 Hz and decoded for playback to conserve flash; its public WAV remains 16-bit PCM. Existing account clips retain their original PCM encoding. Use `--only battery_low` to regenerate just that clip while verifying and preserving existing assets.
 
 - [Piper voice repository at the pinned revision](https://huggingface.co/rhasspy/piper-voices/tree/5041a7a49ae5b3a0f30e6837769eb03fdbb231bd/en/en_US/ljspeech/medium). Repository metadata declares MIT. The model is not distributed here.
 - [LJ Speech dataset](https://keithito.com/LJ-Speech-Dataset/): public-domain-in-the-US recordings and transcripts, aligned by Keith Ito from Linda Johnson's LibriVox readings. The model card is preserved in LJ-Speech-MODEL_CARD.md.
