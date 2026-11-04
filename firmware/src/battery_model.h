@@ -22,6 +22,7 @@ enum class Trend { Learning, Steady, Rising, Falling };
 struct Sample { uint32_t at=0;float mv=0; };
 struct Reading {
     bool valid=false,trendReady=false;
+    bool confirmed=false; // User selected battery-only operation; not hardware detection.
     float millivolts=0,rate=0;
     int percentage=-1;
     uint32_t at=0,coverageMs=0;

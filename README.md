@@ -96,7 +96,7 @@ Banked-reset use is inferred from correlated count/usage changes, with known exp
 
 See [release readiness](docs/RELEASE_READINESS.md) for completed checks and limits. This is an alpha, not a claim of weeks-long unattended reliability.
 
-Tap the battery badge for estimated percentage, measured voltage and a recent voltage-history graph. See [battery measurement limits](docs/HARDWARE.md#battery-display): charging status, current and USB input voltage are not sensed by this board.
+Tap the power badge for voltage history and battery controls. Connect the cell, unplug USB, and confirm **START BATTERY RUN** to enable estimated percentage, discharge-based runtime to a 5% reserve, and low-battery voice warnings. End the run when changing power sources. The default `BAT?` avoids interpreting an empty charger's voltage as a full battery. See [battery measurement limits](docs/HARDWARE.md#battery-display): presence, charging status, current and USB input voltage are not sensed by this board.
 
 Priorities after the first alpha: longer soak testing and interrupted-power coverage, one-account operation and custom labels, an on-device reauthorization flow, optional deployment-time flash encryption, and additional providers through explicit adapters. Bluetooth, microphone and SD features are not enabled merely because the board has them.
 

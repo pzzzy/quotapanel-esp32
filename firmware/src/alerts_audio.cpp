@@ -9,10 +9,12 @@
 #include <math.h>
 #include "codec_es8311.h"
 #include "voices.generated.h"
+#include "voice_mulaw.h"
+#include "battery_monitor.h"
 namespace {
 constexpr int kI2cSda=16,kI2cScl=15,kAmpEnable=1;
 constexpr i2s_port_t kI2sPort=I2S_NUM_0;
-struct Alert {int type;int account;};
+struct Alert {int type;int account;bool preview=false;Alert(int t=0,int a=0,bool p=false):type(t),account(a),preview(p){}};
 QueueHandle_t queue;
 std::atomic<bool> ready{false},muted{false};
 std::atomic<int> volume{25};
@@ -81,13 +83,22 @@ bool chime(int kind) {
     return tone(0,180);
 }
 template<size_t N> bool voice(const int16_t (&samples)[N]) {return writeSamples(samples,N);}
+template<size_t N> bool voice(const uint8_t (&samples)[N]) {
+    int16_t pcm[128];for(size_t at=0;at<N;at+=128){size_t n=min((size_t)128,N-at);
+        for(size_t i=0;i<n;i++)pcm[i]=decodeMulaw(samples[at+i]);
+        if(!writeSamples(pcm,n))return false;
+    }return true;
+}
 void worker(void*) {
     Alert alert;
     for(;;) {
         if(xQueueReceive(queue,&alert,portMAX_DELAY)!=pdTRUE)continue;
         if(muted.load()||!ready.load())continue;
+        if(alert.type>=6&&!alert.preview&&!batteryWarningEligible(alert.type==7))continue;
         i2s_zero_dma_buffer(kI2sPort);digitalWrite(kAmpEnable,LOW);vTaskDelay(pdMS_TO_TICKS(15));
-        bool ok=chime(alert.type) && (alert.account==0?voice(voice_primary):voice(voice_secondary)) && tone(0,100);
+        bool ok=chime(alert.type>=6?(alert.type==7?0:5):alert.type);
+        if(alert.type>=6){if(ok)ok=voice(voice_battery_low);}
+        else ok=ok&&(alert.account==0?voice(voice_primary):voice(voice_secondary))&&tone(0,100);
         if(ok)switch(alert.type){case 0:ok=voice(voice_exhausted);break;case 1:ok=voice(voice_reset);break;case 2:ok=voice(voice_banked_used);break;case 3:ok=voice(voice_banked_gained);break;case 4:ok=voice(voice_warning_10);break;case 5:ok=voice(voice_warning_5);break;}
         if(ok){tone(0,80);played.fetch_add(1);}else if(!muted.load())failed.fetch_add(1);
         vTaskDelay(pdMS_TO_TICKS(80));digitalWrite(kAmpEnable,HIGH);i2s_zero_dma_buffer(kI2sPort);
@@ -110,6 +121,10 @@ bool audioQueueAlert(int type,int account) {
     Alert a{type,account};return xQueueSend(queue,&a,0)==pdTRUE;
 }
 void audioToggleMute() {muted=!muted.load();if(muted)digitalWrite(kAmpEnable,HIGH);}
+bool audioQueueBatteryWarning(bool critical,bool preview){
+    if(!ready.load()||muted.load())return false;
+    Alert a(critical?7:6,-1,preview);return xQueueSend(queue,&a,0)==pdTRUE;
+}
 void audioSetVolume(int percent) {volume=max(0,min(100,percent));Preferences p;p.begin("oa-display",false);p.putUInt("volume",volume);p.end();}
 bool audioMuted(){return muted.load();}
 bool audioReady(){return ready.load();}

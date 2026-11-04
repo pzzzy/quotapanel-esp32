@@ -38,5 +38,10 @@
     "text": "Warning. Five percent or less of your allowance remains.",
     "seconds": 3.32,
     "sha256": "ca4b192ef3cd0cf5f5996fafd3e36ecd92ff2dacb266d7dfe847d6de937da082"
+  },
+  "battery_low": {
+    "text": "Battery low. Please charge.",
+    "seconds": 1.788,
+    "sha256": "e0fcaceef5f9d9c451f39896b4aa8ec789771438b554350a7a11827b9f71fa50"
   }
 }
