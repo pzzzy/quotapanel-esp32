@@ -21,3 +21,4 @@
 #define XZ_SD_D2 48
 #define XZ_SD_D3 47
 #define XZ_BOOT_KEY 0
+#define XZ_BAT_ADC 9

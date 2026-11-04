@@ -96,7 +96,9 @@ Banked-reset use is inferred from correlated count/usage changes, with known exp
 
 See [release readiness](docs/RELEASE_READINESS.md) for completed checks and limits. This is an alpha, not a claim of weeks-long unattended reliability.
 
-Priorities after the first alpha: longer soak testing and interrupted-power coverage, one-account operation and custom labels, an on-device reauthorization flow, optional deployment-time flash encryption, and additional providers through explicit adapters. Bluetooth, microphone, battery telemetry, and SD features are not enabled merely because the board has them.
+Tap the battery badge for estimated percentage, measured voltage and a recent voltage-history graph. See [battery measurement limits](docs/HARDWARE.md#battery-display): charging status, current and USB input voltage are not sensed by this board.
+
+Priorities after the first alpha: longer soak testing and interrupted-power coverage, one-account operation and custom labels, an on-device reauthorization flow, optional deployment-time flash encryption, and additional providers through explicit adapters. Bluetooth, microphone and SD features are not enabled merely because the board has them.
 
 ## Development
 

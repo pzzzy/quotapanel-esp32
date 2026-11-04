@@ -5,6 +5,7 @@
 #include "firmware_version.h"
 #include "native_client.h"
 #include "alerts_audio.h"
+#include "battery_monitor.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
@@ -142,6 +143,7 @@ void monitor(void*){
 void wifiUpdateAccountHealth(bool healthy){accountsHealthy=healthy;if(healthy)healthyPolls++;else healthyPolls=0;}
 bool wifiUpdateBusy(){return busy.load();}
 void wifiUpdateStatus(JsonObject status){
+    batteryStatus(status["battery"].to<JsonObject>());
     status["version"]=QP_VERSION;status["sequence"]=QP_SEQUENCE;status["minimumSequence"]=minimumSequence.load();
     status["updating"]=busy.load();status["state"]=state.load();status["pendingVerify"]=pendingVerify.load();status["progress"]=progress.load();
     status["hostname"]=hostname;status["port"]=8443;status["uptime"]=millis()/1000;

@@ -52,7 +52,7 @@ Post-flash USB checks exposed a repeatable need for an explicit USB-UART reset a
 
 - One-account operation, custom labels and adjustable quiet hours.
 - A visible reauthorization-needed state with a guided setup path.
-- Optional battery telemetry and ambient/idle dimming after validating the actual board circuitry.
+- Cell-specific battery-percentage validation and ambient/idle dimming. Alpha.5 measures voltage and estimates percentage; charge/current sensing requires additional hardware.
 - Provider adapters with explicit, supported authentication/data contracts.
 
 Do not add microphone capture, purchases, reset redemption, or broad cloud permissions merely because hardware or an endpoint makes them possible. They are separate product decisions.

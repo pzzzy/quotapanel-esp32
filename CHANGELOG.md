@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.5
+
+- Add a tappable battery badge with a voltage-derived percentage estimate, measured terminal voltage, low-level colors and a ten-minute voltage sparkline.
+- Sample the GPIO 9 battery divider with calibrated ADC conversion, trimmed multisampling and smoothing. Reject invalid/unstable readings and restart trend learning after gaps or abrupt changes.
+- Show voltage slope in mV/min after three minutes of observations. Explicitly report charging state, current and USB input voltage as not sensed; voltage movement is not proof of charging or current flow.
+- Include battery diagnostics in the existing authenticated Wi-Fi status response. Keep account voice alerts active on the battery detail screen.
+
 ## 0.1.0-alpha.4
 
 - Add signed Wi-Fi updates using certificate-pinned HTTPS, device-specific authorization, ECDSA P-256 image signatures and monotonically increasing release sequences.
