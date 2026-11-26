@@ -159,7 +159,7 @@ void wifiUpdateStatus(JsonObject status){
     status["connection"]=connection;
     status["wifiReauth"]=true;
     batteryStatus(status["battery"].to<JsonObject>());
-    auto audio=status["audio"].to<JsonObject>();audio["ready"]=audioReady();audio["muted"]=audioMuted();audio["played"]=audioPlayed();audio["failed"]=audioFailed();
+    auto audio=status["audio"].to<JsonObject>();audio["ready"]=audioReady();audio["muted"]=audioMuted();audio["volume"]=audioVolume();audio["played"]=audioPlayed();audio["failed"]=audioFailed();
     status["version"]=QP_VERSION;status["sequence"]=QP_SEQUENCE;status["minimumSequence"]=minimumSequence.load();
     status["updating"]=busy.load();status["state"]=state.load();status["pendingVerify"]=pendingVerify.load();status["progress"]=progress.load();
     status["hostname"]=hostname;status["port"]=8443;status["uptime"]=millis()/1000;
