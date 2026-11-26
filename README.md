@@ -15,7 +15,7 @@ A standalone desk display for two ChatGPT/Codex accounts: allowance, credits, ba
 - Shows remaining included allowance, subscription credits, banked reset count, and earliest returned expiration.
 - Estimates time until included allowance is exhausted using recent and historical consumption. Shows confidence and a sensitivity range; estimates are conditional on future usage continuing at a similar pace.
 - Announces 10%, 5%, exhaustion, detected resets, inferred banked-reset use, and newly gained resets. Speech and chimes are embedded and work offline.
-- Keeps history and warning latches through reboot. Boots with sound on at the saved volume. Tap the speaker to mute until reboot; hold BOOT for 1.5 seconds to toggle sound.
+- Keeps history and warning latches through reboot. Boots with sound on at 100% by default and honors a saved volume setting. Tap the speaker to mute until reboot, or hold BOOT for 1.5 seconds to toggle sound.
 
 Credits are subscription/Codex credits, **not dollars or OpenAI API billing credits**. The firmware does not buy credits, redeem resets, send prompts, or run models.
 

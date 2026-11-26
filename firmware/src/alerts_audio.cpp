@@ -14,10 +14,11 @@
 namespace {
 constexpr int kI2cSda=16,kI2cScl=15,kAmpEnable=1;
 constexpr i2s_port_t kI2sPort=I2S_NUM_0;
+constexpr int kDefaultVolume=100;
 struct Alert {int type;int account;bool preview=false;Alert(int t=0,int a=0,bool p=false):type(t),account(a),preview(p){}};
 QueueHandle_t queue;
 std::atomic<bool> ready{false},muted{false};
-std::atomic<int> volume{25};
+std::atomic<int> volume{kDefaultVolume};
 std::atomic<uint32_t> played{0},failed{0};
 bool initI2s() {
     i2s_config_t config = {};
@@ -108,7 +109,7 @@ void worker(void*) {
 }
 void audioBegin() {
     pinMode(kAmpEnable,OUTPUT);digitalWrite(kAmpEnable,HIGH);
-    Preferences p;p.begin("oa-display",true);muted=false;volume=p.getUInt("volume",25);p.end();
+    Preferences p;p.begin("oa-display",true);muted=false;volume=p.getUInt("volume",kDefaultVolume);p.end();
     if(!initI2s())return;
     if(!codecEs8311Begin()){i2s_driver_uninstall(kI2sPort);return;}
     queue=xQueueCreate(8,sizeof(Alert));

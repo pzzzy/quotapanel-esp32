@@ -4,6 +4,7 @@
 
 - Recover existing accounts over pinned HTTPS using the same device profile as Wi-Fi updates and the default browser. Confirm a fresh quota poll after sign-in.
 - Include per-account connection diagnostics in authenticated Wi-Fi status. Retry one interrupted quota read per account cycle while Wi-Fi is still connected.
+- Boot at 100% volume when no volume has been saved. Show the active volume in authenticated Wi-Fi status.
 
 ## 0.1.0-alpha.7
 
