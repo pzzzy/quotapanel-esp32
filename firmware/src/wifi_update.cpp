@@ -76,6 +76,18 @@ esp_err_t statusHandler(httpd_req_t* request){
     JsonDocument doc;wifiUpdateStatus(doc.to<JsonObject>());String body;serializeJson(doc,body);
     return reply(request,"200 OK",body.c_str());
 }
+esp_err_t reauthHandler(httpd_req_t* request){
+    if(!authorized(request))return reply(request,"401 Unauthorized","{\"error\":\"unauthorized\"}");
+    if(pendingVerify.load()||busy.load())return reply(request,"409 Conflict","{\"error\":\"not_ready\"}");
+    size_t length=request->content_len;
+    if(!length||length>2048)return reply(request,"400 Bad Request","{\"error\":\"invalid_request\"}");
+    char body[2049];
+    if(!receive(request,(uint8_t*)body,length,millis()+3000)||memchr(body,0,length))
+        return reply(request,"400 Bad Request","{\"error\":\"invalid_request\"}");
+    body[length]=0;
+    String result=nativeWifiReauth(body);
+    return reply(request,"200 OK",result.c_str());
+}
 esp_err_t updateHandler(httpd_req_t* request){
     if(!authorized(request))return reply(request,"401 Unauthorized","{\"error\":\"unauthorized\"}");
     if(pendingVerify.load()||busy.load())return reply(request,"409 Conflict","{\"error\":\"not_ready\"}");
@@ -143,6 +155,9 @@ void monitor(void*){
 void wifiUpdateAccountHealth(bool healthy){accountsHealthy=healthy;if(healthy)healthyPolls++;else healthyPolls=0;}
 bool wifiUpdateBusy(){return busy.load();}
 void wifiUpdateStatus(JsonObject status){
+    JsonDocument connection;deserializeJson(connection,nativeClientCommand("STATUS"));
+    status["connection"]=connection;
+    status["wifiReauth"]=true;
     batteryStatus(status["battery"].to<JsonObject>());
     auto audio=status["audio"].to<JsonObject>();audio["ready"]=audioReady();audio["muted"]=audioMuted();audio["played"]=audioPlayed();audio["failed"]=audioFailed();
     status["version"]=QP_VERSION;status["sequence"]=QP_SEQUENCE;status["minimumSequence"]=minimumSequence.load();
@@ -191,7 +206,8 @@ void wifiUpdateTick(){
         if(httpd_ssl_start(&server,&config)==ESP_OK){
             httpd_uri_t status={};status.uri="/v1/status";status.method=HTTP_GET;status.handler=statusHandler;
             httpd_uri_t update={};update.uri="/v1/update";update.method=HTTP_POST;update.handler=updateHandler;
-            if(httpd_register_uri_handler(server,&status)!=ESP_OK||httpd_register_uri_handler(server,&update)!=ESP_OK){httpd_ssl_stop(server);server=nullptr;state="server_failed";}
+            httpd_uri_t auth={};auth.uri="/v1/reauth";auth.method=HTTP_POST;auth.handler=reauthHandler;
+            if(httpd_register_uri_handler(server,&status)!=ESP_OK||httpd_register_uri_handler(server,&update)!=ESP_OK||httpd_register_uri_handler(server,&auth)!=ESP_OK){httpd_ssl_stop(server);server=nullptr;state="server_failed";}
             else{serverReady=true;if(MDNS.begin(hostname.c_str()))MDNS.addService("quotapanel","tcp",8443);state=pendingVerify.load()?"verifying":"ready";}
         }else {server=nullptr;state="server_failed";}
     }

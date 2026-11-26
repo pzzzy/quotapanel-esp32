@@ -2,6 +2,7 @@
 #include <Arduino.h>
 void nativeClientBegin();
 String nativeClientCommand(const String &command);
+String nativeWifiReauth(const String &body);
 bool nativeEnabled();
 void nativeConnectionState(const String& state);
 void nativePublishPacket(const String& packet);

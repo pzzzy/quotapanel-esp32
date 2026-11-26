@@ -21,7 +21,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.x509.oid import NameOID
-from quotapanel import Device
+from quotapanel import Device, account_targets, browser_login
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_KEY = ROOT / "assets/ota-public-key.pem"
@@ -256,13 +256,90 @@ def upload(profile, bundle, public_key, host=None):
     )
 
 
+def reauth_operation(profile, host, action, **fields):
+    job = secrets.token_hex(16)
+
+    def send(kind, **payload):
+        return request(
+            profile,
+            "POST",
+            "/v1/reauth",
+            json.dumps({"action": kind, "id": job, **payload}).encode(),
+            host=host,
+            timeout=15,
+        )
+
+    try:
+        result = send(action, **fields)
+    except IdentityError:
+        raise
+    except (OSError, http.client.HTTPException):
+        # If the response was lost, ask for this job's result without resending an OAuth code.
+        result = send("result")
+    end = time.monotonic() + 100
+    while result.get("state") in ("queued", "running") and time.monotonic() < end:
+        time.sleep(1)
+        result = send("result")
+    if result.get("error") or result.get("state") != "complete":
+        raise RuntimeError(
+            result.get("error", result.get("state", "Unknown sign-in result"))
+        )
+    return result
+
+
+def reauth(profile, host, account, no_browser):
+    def status():
+        return request(profile, "GET", "/v1/status", host=host, timeout=15)
+
+    current = status()
+    if not current.get("wifiReauth"):
+        raise RuntimeError("Install firmware with Wi-Fi reauth support first.")
+    if current.get("pendingVerify") or current.get("updating"):
+        raise RuntimeError("Wait for the firmware update to finish before signing in.")
+    connection = current.get("connection", {})
+    if account is None:
+        if len(connection.get("accounts", [])) != 2:
+            raise RuntimeError("Wait for the first account poll, or specify --account.")
+        targets = account_targets(connection)
+    else:
+        targets = [account - 1]
+    if not targets:
+        print(
+            "No account needs reauthorization. Use status to check connection errors."
+        )
+        return
+    for slot in targets:
+        completed = browser_login(
+            slot,
+            no_browser,
+            lambda: reauth_operation(profile, host, "start", slot=slot),
+            lambda callback: reauth_operation(profile, host, "finish", **callback),
+        )
+        end = time.monotonic() + 120
+        while time.monotonic() < end:
+            connection = status().get("connection", {})
+            accounts = connection.get("accounts", [])
+            if (
+                connection.get("polls", 0) > completed["polls"]
+                and len(accounts) > slot
+                and accounts[slot].get("ok")
+            ):
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError(
+                "Sign-in saved. Fresh usage and banked resets are still unavailable. Use status for details."
+            )
+    print("Live usage and banked resets verified over Wi-Fi.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("pair")
     p.add_argument("--port")
     p.add_argument("--profile", type=Path, default=ROOT / ".local/ota-device.json")
-    for name in ("status", "upload"):
+    for name in ("status", "upload", "reauth"):
         p = sub.add_parser(name)
         p.add_argument("--profile", type=Path, default=ROOT / ".local/ota-device.json")
         p.add_argument(
@@ -272,6 +349,9 @@ def main():
         if name == "upload":
             p.add_argument("bundle", type=Path)
             p.add_argument("--public-key", type=Path, default=PUBLIC_KEY)
+        if name == "reauth":
+            p.add_argument("--account", type=int, choices=[1, 2])
+            p.add_argument("--no-browser", action="store_true")
     p = sub.add_parser("sign")
     p.add_argument("firmware", type=Path)
     p.add_argument("--sequence", type=int, required=True)
@@ -306,6 +386,8 @@ def main():
                     request(profile, "GET", "/v1/status", host=args.host), indent=2
                 )
             )
+        elif args.command == "reauth":
+            reauth(profile, args.host, args.account, args.no_browser)
         else:
             upload(
                 profile,

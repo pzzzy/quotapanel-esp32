@@ -31,10 +31,16 @@ The first boot must run its display loop, start the HTTPS update service, initia
 
 The factory application remains a recovery copy; subsequent updates alternate between `ota_0` and `ota_1`. Interrupted uploads leave the boot selection unchanged. Updating never writes account or history partitions. A failed NVS initialization does not erase accounts or the update identity.
 
+## Reauthorizing an existing account
+
+With alpha.8 or later, run `python tools/wifi_update.py reauth` using the same local device profile and network as firmware updates. It opens your default browser and forwards the one-time callback to the board over pinned HTTPS. The ESP32 exchanges the code and verifies a fresh usage poll. Add `--account 1` or `--account 2` to choose a slot explicitly.
+
+Initial account pairing, slot replacement and device profile setup use USB. During reauthorization the firmware verifies the identity already paired to the slot. The computer is only needed while signing in.
+
 ## Security properties and limits
 
 - TLS 1.2 or newer encrypts transport. The updater checks the exact USB-paired certificate fingerprint **before sending HTTP headers or the credential**. This is explicit certificate pinning, not trust-on-first-use, and there is no bypass option. The certificate is a pinned device identity rather than a public-PKI hostname identity.
-- A device-specific bearer credential authorizes both status and update requests. The board stores its SHA-256 digest. No browser-based configuration or account-data endpoint is exposed. Listen port: HTTPS 8443; keep it on a trusted LAN, without public port forwarding.
+- A device-specific bearer credential authorizes status, reauthorization and signed upload requests. The board stores its SHA-256 digest. Status reports per-slot health and request outcomes. Authorization codes travel through the existing HTTPS service and OAuth tokens stay on the ESP32. Listen port: HTTPS 8443; keep it on a trusted LAN, without public port forwarding.
 - ECDSA P-256/SHA-256 binds the board identifier, monotonically increasing release sequence, version, image size and SHA-256 digest. The firmware contains only the release **public** key. A leaked device profile permits update requests but cannot sign arbitrary firmware.
 - The sequence must exceed both the running firmware's sequence and its stored accepted-release floor. Replays and signed downgrades are rejected. This is application-level downgrade protection, not an irreversible eFuse counter. Bootloader rollback to a previously working image remains available.
 - Physical/USB access is still trusted. This project does not burn eFuses or enable hardware secure boot/flash encryption. Physical access, a compromised signing key, or a vulnerability in an already trusted firmware can defeat these application-level protections. TLS resource limits and timeouts reduce exposure but do not prevent all LAN denial of service.

@@ -1,6 +1,6 @@
 # Setup and recovery
 
-Follow the root README in order: install Python 3.11+, back up and flash, configure Wi-Fi, pair both accounts, then enable. Initial setup and reauthorization require USB. Once paired, firmware maintenance can use signed Wi-Fi updates; see [Wi-Fi updates](WIFI_UPDATES.md). Normal polling, TLS, refresh, forecasting, display updates and audio run on the ESP32.
+Follow the root README in order: install Python 3.11+, back up and flash, configure Wi-Fi, pair both accounts, then enable. Initial setup requires USB. Once the device has a paired Wi-Fi profile, firmware updates and account reauthorization can run over the local network. Normal polling, TLS, refresh, forecasting, display updates and audio run on the ESP32. See [Wi-Fi updates and reauthorization](WIFI_UPDATES.md).
 
 ## USB and Wi-Fi
 
@@ -22,7 +22,7 @@ Run `enable` after both accounts are paired. The footer should become DIRECT. Br
 
 - No data: run `diagnose` for per-account HTTP/TLS errors and retry state. A `TLS CERTIFICATE ERROR` needs an up-to-date firmware trust bundle; repeated sign-in does not fix it. Failed fetches retry automatically.
 - No Wi-Fi: run `configure` again. Configuration works before Wi-Fi and clock setup.
-- When the display shows **SIGN IN AGAIN**, connect USB and run `python tools/quotapanel.py reauth`. The command opens the affected sign-ins one at a time in your default browser and confirms live usage and reset credits. Choose the account shown by the setup tool at each prompt. Use `reauth --account 1` to target PRIMARY explicitly, or add `--no-browser` to open the links yourself.
+- When the display shows **SIGN IN AGAIN**, run `python tools/wifi_update.py reauth` on the local network. Use `python tools/quotapanel.py reauth` over USB if you lack the paired profile or cannot reach the board. Both commands open affected accounts one at a time in your default browser. Choose the account shown at each prompt. Use `reauth --account 1` to target PRIMARY explicitly, or add `--no-browser` to open the links yourself.
 - `diagnose` distinguishes an expired, revoked, reused or rejected refresh grant from an unknown refresh outcome. An interrupted request whose token may have rotated can still require browser sign-in. There is no fixed reauthorization interval imposed by QuotaPanel.
 - Refresh test: `refresh --account 1`. Do not repeatedly force refresh in normal operation; the board refreshes proactively and after an authentication failure.
 - Remove an account: `forget --account 1`, then type FORGET. This works offline, pauses polling and reboots. Pair both slots and enable to resume.

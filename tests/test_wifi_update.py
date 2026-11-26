@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from wifi_update import sign, verify, PinnedHTTPS, private_write, upload, IdentityError
+from wifi_update import reauth, reauth_operation
 from flash import verify_bundle
 
 
@@ -26,6 +27,42 @@ class WifiUpdate(unittest.TestCase):
         header = (ROOT / "firmware/src/ota_public_key.h").read_text()
         self.assertIn(public, header)
         self.assertNotIn("PRIVATE KEY", header)
+
+    def test_lost_callback_reply_is_recovered_without_replaying_code(self):
+        with patch(
+            "wifi_update.request",
+            side_effect=[
+                OSError("lost reply"),
+                {"state": "complete", "persisted": True},
+            ],
+        ) as send:
+            self.assertTrue(
+                reauth_operation(
+                    {}, None, "finish", code="test-code", state="test-state"
+                )["persisted"]
+            )
+        before, after = [json.loads(call.args[3]) for call in send.call_args_list]
+        self.assertEqual(before["action"], "finish")
+        self.assertEqual(after, {"action": "result", "id": before["id"]})
+
+    def test_wifi_reauth_waits_for_post_exchange_poll(self):
+        snapshots = [
+            {
+                "wifiReauth": True,
+                "connection": {"accounts": [{"reauthRequired": True}, {"ok": True}]},
+            },
+            {"connection": {"polls": 5, "accounts": [{"ok": True}]}},
+            {"connection": {"polls": 6, "accounts": [{"ok": True}]}},
+        ]
+        with (
+            patch("wifi_update.request", side_effect=snapshots) as get,
+            patch("wifi_update.browser_login", return_value={"polls": 5}) as login,
+            patch("wifi_update.time.sleep"),
+            patch("builtins.print"),
+        ):
+            reauth({}, None, None, False)
+        self.assertEqual(login.call_args.args[:2], (0, False))
+        self.assertEqual(get.call_count, 3)
 
     def test_signature_image_and_metadata_are_all_bound(self):
         self.assertEqual(verify(self.bundle, self.key.public_key())["sequence"], 100)

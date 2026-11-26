@@ -84,7 +84,7 @@ python tools/quotapanel.py ports
 
 ## Before relying on it
 
-If an account shows **SIGN IN AGAIN**, connect USB and run `python tools/quotapanel.py reauth`. The tool finds the affected slots and verifies fresh usage and banked resets after browser sign-in. See [setup and recovery](docs/SETUP.md).
+If an account shows **SIGN IN AGAIN**, run `python tools/wifi_update.py reauth` on the same network using your existing device profile. It opens the affected accounts in your default browser and verifies fresh usage and banked resets. Use `python tools/quotapanel.py reauth` over USB as a fallback. See [setup and recovery](docs/SETUP.md).
 
 This alpha uses the internal `/backend-api/wham/usage` and `/backend-api/wham/rate-limit-reset-credits` interfaces and Codex's public native OAuth client flow. These are not a supported third-party subscription API contract. Authentication or response changes can require firmware maintenance.
 
