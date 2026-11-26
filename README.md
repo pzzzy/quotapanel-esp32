@@ -54,11 +54,11 @@ python tools/quotapanel.py ports
 
    For US Eastern time with daylight saving, use `EST5EDT,M3.2.0,M11.1.0`. See [setup and recovery](docs/SETUP.md).
 
-3. **Pair each account through browser OAuth.** Complete the passkey/security-key prompt if your account requires it. Use a private browser window or switch accounts for the second account. `--no-browser` prints the link without opening it.
+3. **Pair each account through browser OAuth.** Choose the matching account in your default browser and complete any passkey or security-key prompt. Use `--no-browser` to open the link yourself.
 
    ```sh
    python tools/quotapanel.py --port YOUR_PORT pair --account 1
-   python tools/quotapanel.py --port YOUR_PORT pair --account 2 --no-browser
+   python tools/quotapanel.py --port YOUR_PORT pair --account 2
    python tools/quotapanel.py --port YOUR_PORT enable
    ```
 
@@ -84,6 +84,8 @@ python tools/quotapanel.py ports
 
 ## Before relying on it
 
+If an account shows **SIGN IN AGAIN**, connect USB and run `python tools/quotapanel.py reauth`. The tool finds the affected slots and verifies fresh usage and banked resets after browser sign-in. See [setup and recovery](docs/SETUP.md).
+
 This alpha uses the internal `/backend-api/wham/usage` and `/backend-api/wham/rate-limit-reset-credits` interfaces and Codex's public native OAuth client flow. These are not a supported third-party subscription API contract. Authentication or response changes can require firmware maintenance.
 
 Tokens are stored in device flash. **Flash encryption and secure boot are not enabled.** Physical access can expose credentials. An interrupted or ambiguous token rotation requires a fresh browser login; the firmware does not risk replaying an uncertain refresh token. See [security](SECURITY.md).
@@ -98,7 +100,7 @@ See [release readiness](docs/RELEASE_READINESS.md) for completed checks and limi
 
 Tap the power badge for voltage history and battery controls. Connect the cell, unplug USB, and confirm **START BATTERY RUN** to enable estimated percentage, discharge-based runtime to a 5% reserve, and low-battery voice warnings. End the run when changing power sources. The default `BAT?` avoids interpreting an empty charger's voltage as a full battery. See [battery measurement limits](docs/HARDWARE.md#battery-display): presence, charging status, current and USB input voltage are not sensed by this board.
 
-Priorities after the first alpha: longer soak testing and interrupted-power coverage, one-account operation and custom labels, an on-device reauthorization flow, optional deployment-time flash encryption, and additional providers through explicit adapters. Bluetooth, microphone and SD features are not enabled merely because the board has them.
+Next priorities include longer soak testing and interrupted-power coverage, one-account operation, custom labels, optional deployment-time flash encryption, and additional providers through explicit adapters.
 
 ## Development
 

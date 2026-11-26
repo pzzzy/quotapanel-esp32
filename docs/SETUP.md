@@ -14,7 +14,7 @@ Timezone strings use POSIX syntax, not IANA city names. Examples: `UTC0`; `EST5E
 
 `pair --account 1` starts a short-lived loopback listener on 127.0.0.1:1455. Quit any other sign-in process using that port. The board creates PKCE/state, the browser performs login, and the ESP32 exchanges the returned one-time code directly for its own session. Physical security-key/passkey confirmation remains the user's action.
 
-For account 2, use `pair --account 2 --no-browser` and open the printed URL in a private window or another browser profile. Check the account shown by the login page. The firmware rejects pairing the same account into both slots. An optional `--expected-account` identifier can enforce an exact match. Do not post authorization URLs, callbacks or account IDs to issues.
+For account 2, run `pair --account 2` and choose your second account in the browser. Add `--no-browser` if you want to open the link in another browser profile. The firmware rejects pairing the same account into both slots and preserves the identity of an already paired slot. To change identities, use `forget` first. Avoid including authorization URLs, callbacks or account IDs in issue reports.
 
 Run `enable` after both accounts are paired. The footer should become DIRECT. Browser setup is tested on macOS; Linux and Windows setup tools are designed to be portable but are not yet hardware-qualified.
 
@@ -22,7 +22,8 @@ Run `enable` after both accounts are paired. The footer should become DIRECT. Br
 
 - No data: run `diagnose` for per-account HTTP/TLS errors and retry state. A `TLS CERTIFICATE ERROR` needs an up-to-date firmware trust bundle; repeated sign-in does not fix it. Failed fetches retry automatically.
 - No Wi-Fi: run `configure` again. Configuration works before Wi-Fi and clock setup.
-- Invalid/expired login, or uncertain interrupted token rotation: run `pair` again for that account, then `enable`.
+- When the display shows **SIGN IN AGAIN**, connect USB and run `python tools/quotapanel.py reauth`. The command opens the affected sign-ins one at a time in your default browser and confirms live usage and reset credits. Choose the account shown by the setup tool at each prompt. Use `reauth --account 1` to target PRIMARY explicitly, or add `--no-browser` to open the links yourself.
+- `diagnose` distinguishes an expired, revoked, reused or rejected refresh grant from an unknown refresh outcome. An interrupted request whose token may have rotated can still require browser sign-in. There is no fixed reauthorization interval imposed by QuotaPanel.
 - Refresh test: `refresh --account 1`. Do not repeatedly force refresh in normal operation; the board refreshes proactively and after an authentication failure.
 - Remove an account: `forget --account 1`, then type FORGET. This works offline, pauses polling and reboots. Pair both slots and enable to resume.
 - After flashing: the tool pulses reset and verifies the application starts. If a status check still times out, tap RESET/EN once and wait for Wi-Fi/clock synchronization before retrying.

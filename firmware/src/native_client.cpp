@@ -37,7 +37,9 @@ bool storageReady=false;
 JsonDocument cached[2];uint32_t nextPoll=0,pollCount=0,pollFailures=0,consecutiveFailures=0;
 void publish(JsonDocument &doc) {
     String value;serializeJson(doc,value);
-    xSemaphoreTake(lock,portMAX_DELAY);result=value;if(inCommand)commandResult=value;xSemaphoreGive(lock);
+    xSemaphoreTake(lock,portMAX_DELAY);
+    if(inCommand)commandResult=value;else result=value;
+    xSemaphoreGive(lock);
 }
 class BoundedBody: public Stream {
 public:
@@ -72,11 +74,13 @@ void request(const char* name,const String &url,const String &payload,
     out["challenge"]=http.header("cf-mitigated")=="challenge";
     if(http.header("Retry-After").length())out["retryAfter"]=http.header("Retry-After").toInt();
     BoundedBody sink;
-    if(status>0 && http.getSize()<=48000)http.writeToStream(&sink);
+    int read = status>0 && http.getSize()<=48000 ? http.writeToStream(&sink) : -1;
+    bool complete = read>=0 && !sink.overflow && (size_t)read==sink.body.length();
     out["bytes"]=sink.body.length();out["overflow"]=sink.overflow;
-    if(returned && !sink.overflow)*returned=sink.body;
+    if(!complete && status>0)out["bodyReadError"]=read;
+    if(returned)*returned=complete?sink.body:String();
     JsonDocument parsed;
-    if(!deserializeJson(parsed,sink.body)) {
+    if(complete && !deserializeJson(parsed,sink.body)) {
         JsonArray keys=out["keys"].to<JsonArray>();
         for(JsonPair item:parsed.as<JsonObject>())keys.add(item.key().c_str());
         // Diagnostic quota payloads contain no OAuth credentials. Never expose auth bodies.
@@ -115,12 +119,13 @@ bool acceptTokens(const String &body,const String &expected,JsonDocument &sessio
     String access=response["access_token"];
     if(!jwt(access,claims))return false;
     String account=claims["https://api.openai.com/auth"]["chatgpt_account_id"]|"";
-    if(account.length()!=36 || (expected.length()&&account!=expected))return false;
+    if(account.length()!=36 || (expected.length()&&account!=expected) || claims["exp"].as<int64_t>()<=time(nullptr))return false;
     session["access"]=access;session["account"]=account;session["expires"]=claims["exp"].as<int64_t>();
     session["issued"]=time(nullptr);
+    session.remove("earliestRefresh");
     if(response["earliest_refresh_at"].is<int64_t>())session["earliestRefresh"]=response["earliest_refresh_at"];
     if(response["refresh_token"].is<const char*>())session["refresh"]=response["refresh_token"];
-    return session["refresh"].is<const char*>();
+    return String(session["refresh"]|"").length()>0;
 }
 void accountReads(JsonDocument &session,JsonArray requests) {
     String token=session["access"]|"",account=session["account"]|"";
@@ -137,7 +142,16 @@ void browserStart(const String &input,JsonDocument &report) {
     uint8_t random[32],digest[32];esp_fill_random(random,sizeof(random));browserVerifier=base64url(random,sizeof(random));
     esp_fill_random(random,sizeof(random));browserState=base64url(random,sizeof(random));
     mbedtls_sha256_ret((const unsigned char*)browserVerifier.c_str(),browserVerifier.length(),digest,0);
-    browserExpected=args["expected"].as<String>();browserSlot=args["slot"];browserStarted=millis();
+    browserExpected=args["expected"]|"";browserSlot=args["slot"];browserStarted=millis();
+    JsonDocument prior;
+    if(loadSession(browserSlot,prior)) {
+        String paired=prior["account"]|"";
+        if(browserExpected.length() && paired!=browserExpected) {
+            browserSlot=-1;browserVerifier="";browserState="";
+            report["error"]="existing_account_mismatch";return;
+        }
+        browserExpected=paired;
+    }
     String url="https://auth.openai.com/oauth/authorize?response_type=code&client_id="+encode(CLIENT_ID)+
       "&redirect_uri="+encode("http://127.0.0.1:1455/auth/callback")+"&scope="+encode("openid profile email offline_access")+
       "&code_challenge="+base64url(digest,sizeof(digest))+"&code_challenge_method=S256&state="+browserState+
@@ -157,6 +171,7 @@ void browserComplete(const String &input,JsonDocument &report) {
     if(exchange["http"].as<int>()!=200||!acceptTokens(body,expected,session)){report["error"]="exchange_or_account_mismatch";return;}
     JsonDocument other;if(loadSession(1-slot,other)&&other["account"].as<String>()==session["account"].as<String>()){report["error"]="account_already_paired_in_other_slot";return;}
     if(!saveSession(slot,session)){report["error"]="session_storage_failed";return;}
+    cached[slot].clear();nextPoll=millis();consecutiveFailures=0;
     report["account"]=session["account"];
     report["slot"]=slot;report["authenticated"]=true;report["persisted"]=true;report["expires"]=session["expires"];accountReads(session,requests);
 }
@@ -200,15 +215,21 @@ void login(const String &input,JsonDocument &report) {
     if(exchange["http"].as<int>()!=200 || !acceptTokens(body,expected,session)){report["error"]="exchange_or_account_mismatch";return;}
     JsonDocument other;if(loadSession(1-slot,other)&&other["account"].as<String>()==session["account"].as<String>()){report["error"]="account_already_paired_in_other_slot";return;}
     if(!saveSession(slot,session)){report["error"]="session_storage_failed";return;}
+    cached[slot].clear();nextPoll=millis();consecutiveFailures=0;
     report["account"]=session["account"];
     report["authenticated"]=true;report["persisted"]=true;report["expires"]=session["expires"];
     accountReads(session,requests);
 }
-void refresh(int slot,JsonDocument &report,bool performRefresh) {
-    JsonDocument session;if(slot<0||slot>1||!loadSession(slot,session)){report["error"]="no_device_session";return;}
+void refreshSession(int slot,JsonDocument &session,JsonDocument &report,bool performRefresh,bool allowAccessFallback=false) {
     JsonArray requests=report["requests"].as<JsonArray>();
+    report["slot"]=slot;report["expires"]=session["expires"];
+    if(session["refreshPending"]==true){
+        report["reauthRequired"]=true;
+        report["error"]=session["refreshFailure"]|"refresh_outcome_unknown";
+        report["refreshHttp"]=session["refreshHttp"];
+        return;
+    }
     if(performRefresh) {
-        if(session["refreshPending"]==true){report["error"]="reauthorization_required";return;}
         JsonDocument payload;payload["grant_type"]="refresh_token";payload["client_id"]=CLIENT_ID;payload["refresh_token"]=session["refresh"];
         String encoded,body;serializeJson(payload,encoded);
         // Persist before rotation. Power loss or an ambiguous result requires a fresh login.
@@ -216,18 +237,41 @@ void refresh(int slot,JsonDocument &report,bool performRefresh) {
         if(!saveSession(slot,session)){report["error"]="storage_failed_before_refresh";return;}
         JsonObject metadata=requests.add<JsonObject>();
         request("token-refresh","https://auth.openai.com/oauth/token",encoded,"","",metadata,&body);
-        if(metadata["http"].as<int>()!=200 || !acceptTokens(body,session["account"].as<String>(),session)){
-            if(recovery::refreshDefinitelyUnsent(metadata["http"].as<int>())){
+        int http=metadata["http"]|0;
+        JsonDocument replacement;replacement.set(session);
+        if(http!=200 || !acceptTokens(body,session["account"].as<String>(),replacement)){
+            if(recovery::refreshDefinitelyUnsent(http)){
                 session.remove("refreshPending");
-                report["error"]=saveSession(slot,session)?"refresh_connection_failed":"refresh_state_storage_failed";
-            }else report["error"]="refresh_failed_reauthorize";
-            return;
+                if(!saveSession(slot,session)){report["error"]="refresh_state_storage_failed";return;}
+                report["refreshFailure"]="refresh_connection_failed";
+                if(!allowAccessFallback || session["expires"].as<int64_t>()<=time(nullptr)){
+                    report["error"]="refresh_connection_failed";return;
+                }
+            }else{
+                JsonDocument error;
+                deserializeJson(error,body);
+                const char* code=error["error"]["code"]|(error["error"]|"");
+                const char* reason=recovery::refreshFailure(http,code);
+                session["refreshFailure"]=reason;session["refreshHttp"]=http;
+                saveSession(slot,session); // The pending marker is already durable.
+                report["error"]=reason;report["refreshHttp"]=http;report["reauthRequired"]=true;return;
+            }
+        }else{
+            replacement.remove("refreshPending");
+            replacement.remove("refreshFailure");replacement.remove("refreshHttp");
+            if(!saveSession(slot,replacement)){report["error"]="refreshed_session_storage_failed";return;}
+            session.set(replacement);report["refreshed"]=true;
         }
-        session.remove("refreshPending");
-        if(!saveSession(slot,session)){report["error"]="refreshed_session_storage_failed";return;}
-        report["refreshed"]=true;
     }
-    report["slot"]=slot;report["expires"]=session["expires"];accountReads(session,requests);
+    report["expires"]=session["expires"];accountReads(session,requests);
+}
+void refresh(int slot,JsonDocument &report,bool performRefresh) {
+    JsonDocument session;
+    if(slot<0||slot>1||!loadSession(slot,session)){
+        report["error"]=storageReady?"no_device_session":"account_storage_unavailable";
+        report["reauthRequired"]=storageReady;return;
+    }
+    refreshSession(slot,session,report,performRefresh);
 }
 std::atomic<bool> timeSynchronized{false};
 bool clockReady(){
@@ -245,10 +289,12 @@ bool clockReady(){
 }
 String accountError(JsonDocument& report){
     String error=report["error"]|"";
-    if(error=="reauthorization_required"||error=="refresh_failed_reauthorize"||error=="no_device_session")return "SIGN IN AGAIN";
+    if(report["reauthRequired"]==true)return "SIGN IN AGAIN";
     if(error.indexOf("storage")>=0)return "ACCOUNT STORAGE ERROR";
     for(JsonObject r:report["requests"].as<JsonArray>()){
-        int http=r["http"]|0;if(http!=200)return recovery::requestError(http,r["tlsError"]|0);
+        int http=r["http"]|0;
+        if(http==401)return "ACCOUNT ACCESS DENIED";
+        if(http!=200)return recovery::requestError(http,r["tlsError"]|0);
     }
     return "INVALID SERVER DATA";
 }
@@ -259,15 +305,21 @@ void pollAccounts(){
         nextPoll=millis()+10000;return;
     }
     uint32_t pollStarted=millis();
-    JsonDocument status;status["state"]="polling";status["native"]=true;status["epoch"]=(int64_t)time(nullptr);publish(status);
+    // Keep the last complete per-account diagnostics visible during network I/O.
+    JsonDocument status;status["native"]=true;status["epoch"]=(int64_t)time(nullptr);
     bool all=true,any=false;uint32_t retryAfter=0;
     for(int slot=0;slot<2;slot++){
         JsonDocument session,report;report["requests"].to<JsonArray>();
         bool loaded=loadSession(slot,session);
-        bool renew=loaded&&session["expires"].as<int64_t>()<=time(nullptr)+86400 && session["earliestRefresh"].as<int64_t>()<=time(nullptr);
-        refresh(slot,report,renew);
-        bool unauthorized=false;for(JsonObject r:report["requests"].as<JsonArray>())if(r["http"].as<int>()==401)unauthorized=true;
-        if(unauthorized&&!renew&&loaded){report.clear();report["requests"].to<JsonArray>();refresh(slot,report,true);}
+        int64_t now=time(nullptr);
+        bool renew=loaded&&recovery::refreshDue(now,session["expires"].as<int64_t>(),session["earliestRefresh"].as<int64_t>());
+        if(loaded)refreshSession(slot,session,report,renew,true);
+        else {report["error"]=storageReady?"no_device_session":"account_storage_unavailable";report["reauthRequired"]=storageReady;}
+        bool unauthorized=false;
+        for(JsonObject r:report["requests"].as<JsonArray>())if(r["http"]==401&&r["endpoint"]=="usage")unauthorized=true;
+        if(unauthorized&&!renew&&loaded&&recovery::retryUnauthorized(now,session["issued"].as<int64_t>(),session["earliestRefresh"].as<int64_t>())){
+            report.clear();report["requests"].to<JsonArray>();refreshSession(slot,session,report,true);
+        }
         for(JsonObject r:report["requests"].as<JsonArray>())retryAfter=std::max(retryAfter,std::min(3600u,r["retryAfter"]|0u));
         JsonObject usage,credits;
         for(JsonObject r:report["requests"].as<JsonArray>()){
@@ -278,18 +330,24 @@ void pollAccounts(){
         bool valid=report["error"].isNull()&&!usage.isNull()&&!credits.isNull()&&credits["credits"].is<JsonArray>()&&credits["available_count"].is<int>()&&loaded&&usage["account_id"].as<String>()==session["account"].as<String>();
         if(valid){any=true;cached[slot].clear();nativeDataUpdate(slot,session["account"].as<String>(),usage,credits,cached[slot].to<JsonObject>(),time(nullptr));}
         else {all=false;cached[slot]["label"]=slot==0?"PRIMARY":"SECONDARY";cached[slot]["error"]=accountError(report);}
+        bool reauth=report["reauthRequired"]|false;
+        cached[slot]["reauthRequired"]=reauth;
         JsonObject summary=status["accounts"][slot].to<JsonObject>();summary["ok"]=valid;
         summary["error"]=cached[slot]["error"];summary["expires"]=report["expires"];
+        summary["reauthRequired"]=reauth;
+        if(!report["error"].isNull())summary["reason"]=report["error"];
+        if(!report["refreshFailure"].isNull())summary["reason"]=report["refreshFailure"];
+        if(!report["refreshHttp"].isNull())summary["refreshHttp"]=report["refreshHttp"];
         JsonArray requests=summary["requests"].to<JsonArray>();
         for(JsonObject r:report["requests"].as<JsonArray>()){
             auto item=requests.add<JsonObject>();
-            for(const char* key:{"endpoint","http","elapsedMs","tlsError","tlsMessage","httpError","retryAfter","verificationFlags"})if(!r[key].isNull())item[key]=r[key];
+            for(const char* key:{"endpoint","http","elapsedMs","tlsError","tlsMessage","httpError","retryAfter","verificationFlags","bodyReadError"})if(!r[key].isNull())item[key]=r[key];
         }
     }
     wifiUpdateAccountHealth(all);
     pollCount++;if(!all){pollFailures++;consecutiveFailures++;}else consecutiveFailures=0;
-    uint32_t waitMs=all?30000:recovery::retryMs(consecutiveFailures,retryAfter);
-    nextPoll=all&&millis()-pollStarted<waitMs?pollStarted+waitMs:millis()+(all?1000:waitMs);
+    uint32_t waitMs=any&&!retryAfter?30000:recovery::retryMs(consecutiveFailures,retryAfter);
+    nextPoll=any&&millis()-pollStarted<waitMs?pollStarted+waitMs:millis()+(all?1000:waitMs);
     JsonDocument data;data["version"]=1;data["source"]="esp32";data["now"]=(int64_t)time(nullptr);
     data["connection"]=all?"LIVE":any?"PARTIAL DATA":"RETRYING";
     if(!all)data["retryAt"]=(int64_t)time(nullptr)+waitMs/1000;
@@ -302,13 +360,16 @@ void worker(void*) {
     bool wasOnline=false;
     for(;;) {
         if(updatePause.load()){vTaskDelay(pdMS_TO_TICKS(100));continue;}
+        // Wait outside the activity lock. Leave a queued command in place if a
+        // restart or update starts while the worker is waiting for the lock.
+        String* command=nullptr;
+        xQueuePeek(jobs,&command,pdMS_TO_TICKS(1000));
         ActivityGuard activity;
         if(updatePause.load())continue;
         bool online=WiFi.status()==WL_CONNECTED;
         if(online&&!wasOnline){nextPoll=millis();consecutiveFailures=0;}
         wasOnline=online;
-        String* command=nullptr;
-        if(xQueueReceive(jobs,&command,pdMS_TO_TICKS(1000))!=pdTRUE){
+        if(xQueueReceive(jobs,&command,0)!=pdTRUE){
             if(enabled&&(int32_t)(millis()-nextPoll)>=0){nextPoll=millis()+30000;pollAccounts();}
             continue;
         }
@@ -338,7 +399,7 @@ void worker(void*) {
         } else if(command->startsWith("MODE ")) {
             bool value=command->substring(5)=="1";JsonDocument a,b;
             if(value&&(!loadSession(0,a)||!loadSession(1,b)||!nativeDataBegin()))report["error"]="native_not_ready";
-            else {Preferences p;p.begin("oa-native",false,"accounts");bool ok=p.putBool("enabled",value)==1;p.end();if(ok){enabled=value;nextPoll=0;}else report["error"]="mode_storage_failed";report["native"]=enabled.load();}
+            else {Preferences p;p.begin("oa-native",false,"accounts");bool ok=p.putBool("enabled",value)==1;p.end();if(ok){enabled=value;nextPoll=millis();}else report["error"]="mode_storage_failed";report["native"]=enabled.load();}
         } else if(command->startsWith("SEED ")||command->startsWith("BASELINE ")) {
             bool seed=command->startsWith("SEED ");JsonDocument input,session;
             if(deserializeJson(input,command->substring(seed?5:9))||!input["slot"].is<int>()||input["slot"].as<int>()<0||input["slot"].as<int>()>1||!loadSession(input["slot"],session))report["error"]="invalid_import";
@@ -420,7 +481,8 @@ String nativeClientCommand(const String &command) {
 }
 
 bool nativePauseForUpdate(uint32_t timeoutMs){
-    updatePause=true;
+    bool expected=false;
+    if(!updatePause.compare_exchange_strong(expected,true))return false;
     bool acquired=updateLock&&xSemaphoreTake(updateLock,pdMS_TO_TICKS(timeoutMs))==pdTRUE;
     updateLockHeld=acquired;if(!acquired)updatePause=false;return acquired;
 }

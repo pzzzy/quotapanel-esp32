@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #pragma once
 #include <stdint.h>
+#include <string.h>
 namespace recovery {
 struct Calendar {int year,month,day,hour,minute,second;};
 inline int compare(Calendar a,Calendar b){
@@ -15,6 +16,24 @@ inline int certificateTime(Calendar first,Calendar last,Calendar now){
 // Arduino HTTPClient returns -1 only when connect() failed, before sending
 // headers or a body. All other failed refresh outcomes remain ambiguous.
 inline bool refreshDefinitelyUnsent(int http) { return http == -1; }
+inline bool refreshDue(int64_t now,int64_t expires,int64_t earliest){
+    return now>=earliest&&expires<=now+300;
+}
+// A fresh access token rejected by the usage API may indicate an upstream
+// policy or endpoint change. Avoid rotating every time that API returns 401.
+inline bool retryUnauthorized(int64_t now,int64_t issued,int64_t earliest){
+    return now>=earliest&&now-issued>=300;
+}
+inline const char* refreshFailure(int http,const char* code){
+    if(http==400||http==401){
+        if(!strcmp(code,"refresh_token_expired"))return "refresh_token_expired";
+        if(!strcmp(code,"refresh_token_invalidated"))return "refresh_token_revoked";
+        if(!strcmp(code,"refresh_token_reused"))return "refresh_token_reused";
+        if(!strcmp(code,"invalid_grant"))return "refresh_grant_rejected";
+    }
+    if(http==200)return "refresh_response_invalid";
+    return "refresh_outcome_unknown";
+}
 inline uint32_t retryMs(unsigned failures, uint32_t retryAfterSeconds) {
     const uint32_t delays[] = {5000,15000,30000,60000,120000,300000};
     unsigned index = failures ? failures-1 : 0;

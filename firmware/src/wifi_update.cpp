@@ -92,7 +92,7 @@ esp_err_t updateHandler(httpd_req_t* request){
     busy=true;progress=0;state="waiting_for_account_requests";
     // A token rotation must finish durably before any update-triggered reboot.
     if(!nativePauseForUpdate(90000)){
-        busy=false;nativeResumeAfterUpdate();state="account_request_busy";
+        busy=false;state="account_request_busy";
         return reply(request,"503 Service Unavailable","{\"error\":\"account_request_busy\"}");
     }
     esp_ota_handle_t handle=0;bool opened=false;const char* failure=nullptr;

@@ -132,8 +132,11 @@ def validate_network(ssid, password, timezone):
 def pair(port, slot, no_browser, expected):
     callback = {}
     state = ""
+    label = ("PRIMARY", "SECONDARY")[slot]
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = 5
+
         def log_message(self, *_):
             pass
 
@@ -144,7 +147,13 @@ def pair(port, slot, no_browser, expected):
             url = urlsplit(self.path)
             q = parse_qs(url.query)
             if url.path == "/auth/callback":
-                if not state or not hmac.compare_digest(q.get("state", [""])[0], state):
+                received = q.get("state", [""])[0]
+                if (
+                    callback
+                    or not state
+                    or not received.isascii()
+                    or not hmac.compare_digest(received, state)
+                ):
                     self.send_error(400, "Invalid state")
                     return
                 if q.get("error"):
@@ -157,10 +166,16 @@ def pair(port, slot, no_browser, expected):
                 self.send_response(303)
                 self.send_header("Location", "/done")
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
                 self.end_headers()
                 return
             if url.path == "/done":
-                body = b'<html><title>QuotaPanel ESP32</title><body style="font:22px system-ui;padding:3em"><h1>Authorization received</h1><p>Your ESP32 is completing sign-in. Check the setup tool for the result.</p></body></html>'
+                message = (
+                    "Authorization declined. Return to the setup tool to retry."
+                    if callback.get("error")
+                    else f"Return to the setup tool for the {label} result."
+                )
+                body = f'<html><title>QuotaPanel ESP32</title><body style="font:22px system-ui;padding:3em"><h1>QuotaPanel ESP32</h1><p>{message}</p></body></html>'.encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html")
                 self.send_header("Cache-Control", "no-store")
@@ -170,7 +185,12 @@ def pair(port, slot, no_browser, expected):
                 return
             self.send_error(404)
 
-    server = HTTPServer(("127.0.0.1", 1455), Handler)
+    try:
+        server = HTTPServer(("127.0.0.1", 1455), Handler)
+    except OSError as exc:
+        raise RuntimeError(
+            "Cannot open 127.0.0.1:1455. Finish any other local sign-in and try again."
+        ) from exc
     server.timeout = 1
     try:
         with Device(port) as device:
@@ -186,12 +206,11 @@ def pair(port, slot, no_browser, expected):
             or parsed.path != "/oauth/authorize"
         ):
             raise RuntimeError("Unexpected authorization URL")
-        print(
-            f"Authorize account {slot+1}. For the second account, use a private browser window or switch accounts.\n{url}",
-            flush=True,
-        )
-        if not no_browser:
-            webbrowser.open(url)
+        print(f"Authorize {label} (account {slot+1}) in your browser.", flush=True)
+        if no_browser or not webbrowser.open(url):
+            print(
+                f"Open this link in the browser profile for {label}:\n{url}", flush=True
+            )
         end = time.monotonic() + 880
         while not callback and time.monotonic() < end:
             server.handle_request()
@@ -203,12 +222,79 @@ def pair(port, slot, no_browser, expected):
     if callback.get("error"):
         raise RuntimeError(callback["error"])
     with Device(port) as device:
-        result = device.native("CALLBACK " + json.dumps(callback))
+        try:
+            result = device.native("CALLBACK " + json.dumps(callback))
+        except RuntimeError as exc:
+            if str(exc) in (
+                "exchange_or_account_mismatch",
+                "account_already_paired_in_other_slot",
+            ):
+                raise RuntimeError(
+                    f"{label} was not changed. Check the signed-in account and retry from its browser profile or a private window."
+                ) from exc
+            raise
     callback.clear()
-    print(
-        f"Account {slot+1} paired on the ESP32 (ID ending {result.get('account','unknown')[-8:]})."
-    )
-    print("Pair both accounts, then run enable. Tokens remain on the ESP32.")
+    if not result.get("persisted"):
+        raise RuntimeError(f"{label} sign-in was not saved")
+    print(f"{label} sign-in saved on the ESP32.", flush=True)
+    return result
+
+
+def account_targets(connection):
+    return [
+        index
+        for index, account in enumerate(connection.get("accounts", [])[:2])
+        if account.get("reauthRequired", account.get("error") == "SIGN IN AGAIN")
+    ]
+
+
+def wait_for_accounts(device, targets, after_poll, timeout=120):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        connection = device.query("NATIVE STATUS", "state")
+        accounts = connection.get("accounts", [])
+        if connection.get("polls", 0) > after_poll and all(
+            len(accounts) > slot and accounts[slot].get("ok") for slot in targets
+        ):
+            return True
+        time.sleep(1)
+    return False
+
+
+def reauth(port, account, no_browser):
+    with Device(port) as device:
+        status = device.query("STATUS", "firmware")
+        if not status.get("standalone"):
+            raise RuntimeError(
+                "Direct mode is disabled. Use pair and enable for setup."
+            )
+        if not status.get("wifi"):
+            raise RuntimeError("The ESP32 needs a Wi-Fi connection to sign in.")
+        if account is None:
+            connection = device.query("NATIVE STATUS", "state")
+            if len(connection.get("accounts", [])) != 2:
+                raise RuntimeError(
+                    "Wait for the board's first poll, or specify --account."
+                )
+            targets = account_targets(connection)
+        else:
+            targets = [account - 1]
+    if not targets:
+        print(
+            "No account has requested reauthorization. Use diagnose for connection errors."
+        )
+        return
+    for slot in targets:
+        pair(port, slot, no_browser, expected=None)
+    with Device(port) as device:
+        after_poll = device.query("NATIVE STATUS", "state").get("polls", 0)
+        # Older firmware needs a nudge to exit its accumulated retry backoff.
+        device.native("MODE 1")
+        if not wait_for_accounts(device, targets, after_poll):
+            raise RuntimeError(
+                "Sign-in saved. The board has not verified fresh usage and credits yet. Run diagnose."
+            )
+    print("Live usage and banked resets verified for the recovered accounts.")
 
 
 def screenshot(device, output):
@@ -261,6 +347,11 @@ def main():
     auth.add_argument("--account", type=int, choices=[1, 2], required=True)
     auth.add_argument("--expected-account")
     auth.add_argument("--no-browser", action="store_true")
+    recover = sub.add_parser(
+        "reauth", help="recover accounts that need browser sign-in"
+    )
+    recover.add_argument("--account", type=int, choices=[1, 2])
+    recover.add_argument("--no-browser", action="store_true")
     refresh = sub.add_parser("refresh")
     refresh.add_argument("--account", type=int, choices=[1, 2], required=True)
     forget = sub.add_parser("forget")
@@ -292,6 +383,10 @@ def main():
     port = args.port or select_port()
     if args.command == "pair":
         pair(port, args.account - 1, args.no_browser, args.expected_account)
+        print("For initial setup, pair both accounts, then run enable.")
+        return
+    if args.command == "reauth":
+        reauth(port, args.account, args.no_browser)
         return
     with Device(port) as device:
         if args.command == "configure":
@@ -329,10 +424,15 @@ def main():
             print(json.dumps(device.native("MODE 1"), indent=2))
         elif args.command == "refresh":
             result = device.native(f"REFRESH {args.account-1}")
+            if not result.get("refreshed"):
+                raise RuntimeError("Token refresh did not complete.")
+            reads = {r["endpoint"]: r["http"] for r in result.get("requests", [])}
+            if reads.get("usage") != 200 or reads.get("reset-credits") != 200:
+                raise RuntimeError(
+                    "Token refreshed, but usage or banked resets could not be read."
+                )
             print(
-                "Refresh verified on the ESP32."
-                if result.get("refreshed")
-                else "Refresh did not complete."
+                "Token refreshed on the ESP32. Usage and banked resets returned HTTP 200."
             )
         elif args.command == "forget":
             if (
