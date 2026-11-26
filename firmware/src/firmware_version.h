@@ -1,4 +1,4 @@
 #pragma once
 // Monotonically increasing signed-update sequence; never reuse for different releases.
-#define QP_VERSION "0.1.0-alpha.6"
-#define QP_SEQUENCE 108u
+#define QP_VERSION "0.1.0-alpha.7"
+#define QP_SEQUENCE 111u

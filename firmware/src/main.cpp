@@ -27,6 +27,7 @@ uint64_t lastAlert=0;
 String alertBanner;uint32_t bannerUntil=0;
 uint8_t* capturedFrame=nullptr;
 uint32_t nextDraw = 0;
+bool restartRequested=false;
 const uint32_t BG=0x080F1B, CARD=0x142235, WHITE=0xF2F7FF, MUTED=0x8DA3BB;
 const uint32_t MINT=0x5DE4BE, BLUE=0x79B8FF, AMBER=0xFFBF69, RED=0xFF7185;
 
@@ -167,6 +168,7 @@ void drawDetails(JsonVariant a,int64_t now,bool connected) {
     if(unavailable)range="WAITING FOR FRESH DATA";
     text("RANGE",20,194,MUTED);right(range,298,194,MUTED);
     String note=unavailable?(a["error"].isNull()?"STALE - RECONNECTING":a["error"].as<String>()):f["resetPossible"]==true?"RESET MAY ARRIVE BEFORE EXHAUSTION":f["rate"].isNull()?"LEARNING FROM MEASURED QUOTA USE":String(f["confidence"]|"LOW")+" CONF / "+String(f["rate"].as<double>(),1)+"%/H / "+durationText(f["coverageSeconds"]|0)+" DATA";
+    if(a["reauthRequired"]==true)note="CONNECT USB / RUN QUOTAPANEL.PY REAUTH";
     if(!unavailable&&f["historical"]==true)note="PAST PACE / LOW CONF / "+durationText(f["historyAgeSeconds"]|0)+" OLD";
     if(w["historyHealthy"]==false)note="HISTORY NOT SAVED / CHECK DEVICE";
     text(note,12,222,unavailable||w["historyHealthy"]==false?AMBER:MUTED);
@@ -277,7 +279,9 @@ void draw() {
             int64_t updated=min(doc["accounts"][0]["updated"].as<int64_t>(),doc["accounts"][1]["updated"].as<int64_t>());
             String age=updated>0?String((long)(now-updated))+"s":"--";
             if((int32_t)(bannerUntil-millis())>0)text(alertBanner,12,232,MINT);
-            else if(!doc["retryAt"].isNull()){
+            else if(doc["accounts"][0]["reauthRequired"]==true||doc["accounts"][1]["reauthRequired"]==true){
+                text("SIGN IN VIA USB: QUOTAPANEL.PY REAUTH",12,232,AMBER);
+            }else if(!doc["retryAt"].isNull()){
                 text("RETRY IN "+String((long)max(0LL,doc["retryAt"].as<int64_t>()-now))+"s",12,232,AMBER);
                 right("TAP FOR DETAILS",308,232,MUTED);
             }else {text((nativeEnabled()?"DIRECT ":"SYNC ")+age+" AGO",12,232,MUTED);right("TAP ACCOUNT FOR DETAILS",308,232,MUTED);}
@@ -327,6 +331,7 @@ bool serialWriteAll(const uint8_t* bytes, size_t length) {
     return true;
 }
 void configure(const String &input){
+    if(wifiUpdateBusy()){Serial.println("ERROR UPDATE IN PROGRESS");return;}
     JsonDocument net;bool valid=!deserializeJson(net,input);
     String name=net["ssid"]|"",pass=net["password"]|"",zone=net["timezone"]|"UTC0";
     valid=valid&&name.length()>0&&name.length()<=32&&pass.length()<=63&&zone.length()>0&&zone.length()<=96;
@@ -335,7 +340,7 @@ void configure(const String &input){
     JsonDocument clean;clean["ssid"]=name;clean["password"]=pass;clean["timezone"]=zone;String encoded;serializeJson(clean,encoded);
     Preferences store;bool saved=store.begin("oa-display",false)&&store.putString("net",encoded)==encoded.length()&&store.getString("net","")==encoded;store.end();
     if(!saved){Serial.println("ERROR CONFIG STORAGE");return;}
-    Serial.println("OK CONFIG");Serial.flush();delay(150);ESP.restart();
+    Serial.println("OK CONFIG");Serial.flush();restartRequested=true;
 }
 void serialCommands() {
     static String line;
@@ -371,7 +376,9 @@ void serialCommands() {
             } else if(line.startsWith("NATIVE ")) {
                 String reply=nativeClientCommand(line.substring(7));reply+="\n";
                 serialWriteAll((const uint8_t*)reply.c_str(),reply.length());
-            } else if(line=="REBOOT") {Serial.println("OK REBOOT");Serial.flush();delay(100);ESP.restart();
+            } else if(line=="REBOOT") {
+                if(wifiUpdateBusy())Serial.println("ERROR UPDATE IN PROGRESS");
+                else {Serial.println("OK REBOOT");Serial.flush();restartRequested=true;}
             } else if(line=="CAPTURE") {
                 if(!capturedFrame)capturedFrame=(uint8_t*)ps_malloc(320*240*3);
                 if(!capturedFrame)Serial.println("ERROR MEMORY");
@@ -423,6 +430,7 @@ void setup() {
 }
 void loop() {
     wifiUpdateTick();batteryTick();serialCommands();touch();
+    if(restartRequested&&!wifiUpdateBusy()&&nativePauseForUpdate(0)){delay(100);ESP.restart();}
     static bool pressed=false,longPress=false;static uint32_t pressedAt=0;
     bool key=digitalRead(XZ_BOOT_KEY)==LOW;
     if(key&&!pressed){pressedAt=millis();longPress=false;}

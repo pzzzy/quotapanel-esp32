@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-alpha.7
+
+- Add guided USB `reauth` for affected accounts, bind browser recovery to the existing slot identity, resume polling after sign-in, and verify usage and reset-credit reads.
+- Rotate access tokens closer to expiry. Preserve a safe refresh failure reason across reboots and keep using a valid access token after a refresh connection failure before transmission. Preserve the fail-closed marker for uncertain rotations.
+- Keep polling a healthy account when its peer needs sign-in. Distinguish usage access denial from a refresh failure, and retain the latest completed diagnostics during polling and browser commands.
+- Wait for account operations before a USB software restart and check response body completion before accepting account data or rotated credentials.
+
 ## 0.1.0-alpha.6
 
 - Fix false battery percentages from the charger-driven empty BAT socket. Default to unconfirmed power and require an explicit battery-only run for percentage, runtime and warnings; revoke confirmation on suspicious readings or a connected USB host.
