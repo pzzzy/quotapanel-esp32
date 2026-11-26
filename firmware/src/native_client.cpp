@@ -29,13 +29,31 @@ struct ActivityGuard {
 };
 String result = "{\"state\":\"idle\"}";
 String commandResult=result;bool inCommand=false;
+String wifiResult,wifiRequestId;
+bool wifiJobPending=false, wifiJobActive=false;
 std::atomic<bool> cancelled{false},updatePause{false},updateLockHeld{false};
 const char* CLIENT_ID="app_EMoamEEZ73f0CkXaXp7hrann";
-String browserVerifier,browserState,browserExpected;int browserSlot=-1;uint32_t browserStarted=0;
+struct BrowserFlow {
+    String verifier,state,expected;
+    int slot=-1;
+    uint32_t started=0;
+};
+BrowserFlow browserFlows[2]; // USB and Wi-Fi each own their pending browser session.
 std::atomic<bool> enabled{false};
 bool storageReady=false;
 JsonDocument cached[2];uint32_t nextPoll=0,pollCount=0,pollFailures=0,consecutiveFailures=0;
 void publish(JsonDocument &doc) {
+    if(wifiJobActive){
+        JsonDocument safe;
+        for(const char* key:{"state","error","authorizationUrl","stateToken","persisted","polls"})
+            if(!doc[key].isNull())safe[key]=doc[key];
+        String encoded;serializeJson(safe,encoded);
+        xSemaphoreTake(lock,portMAX_DELAY);
+        wifiResult=encoded;wifiJobPending=doc["state"]=="running";
+        if(!wifiJobPending)wifiJobActive=false;
+        xSemaphoreGive(lock);
+        return;
+    }
     String value;serializeJson(doc,value);
     xSemaphoreTake(lock,portMAX_DELAY);
     if(inCommand)commandResult=value;else result=value;
@@ -54,9 +72,9 @@ public:
 };
 void request(const char* name,const String &url,const String &payload,
              const String &access,const String &account,JsonObject out,
-             String* returned=nullptr,bool form=false) {
-    VerifiedTLSClient tls;tls.setCACert(NATIVE_ROOTS);tls.setHandshakeTimeout(20);
-    HTTPClient http;http.setConnectTimeout(15000);http.setTimeout(15000);
+             String* returned=nullptr,bool form=false,bool shortRetry=false) {
+    VerifiedTLSClient tls;tls.setCACert(NATIVE_ROOTS);tls.setHandshakeTimeout(shortRetry?10:20);
+    HTTPClient http;http.setConnectTimeout(shortRetry?7000:15000);http.setTimeout(shortRetry?8000:15000);
     http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
     http.setReuse(false);http.setUserAgent("codex-cli");
     const char* headers[]={"Content-Type","cf-mitigated","Retry-After"};
@@ -129,8 +147,18 @@ bool acceptTokens(const String &body,const String &expected,JsonDocument &sessio
 }
 void accountReads(JsonDocument &session,JsonArray requests) {
     String token=session["access"]|"",account=session["account"]|"";
-    request("usage","https://chatgpt.com/backend-api/wham/usage","",token,account,requests.add<JsonObject>());
-    request("reset-credits","https://chatgpt.com/backend-api/wham/rate-limit-reset-credits","",token,account,requests.add<JsonObject>());
+    bool retried=false;
+    auto read=[&](const char* name,const char* url){
+        auto response=requests.add<JsonObject>();request(name,url,"",token,account,response);
+        int http=response["http"]|0;
+        int failure=http==200?(response["bodyReadError"]|0):http;
+        if(retried||WiFi.status()!=WL_CONNECTED||!recovery::retryQuotaRead(failure,response["tlsError"]|0))return;
+        retried=true;
+        response.clear();request(name,url,"",token,account,response,nullptr,false,true);
+        response["firstError"]=failure;
+    };
+    read("usage","https://chatgpt.com/backend-api/wham/usage");
+    read("reset-credits","https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
 }
 String base64url(const uint8_t* bytes,size_t length) {
     unsigned char encoded[128];size_t n=0;
@@ -138,33 +166,43 @@ String base64url(const uint8_t* bytes,size_t length) {
     String result((char*)encoded,n);result.replace('+','-');result.replace('/','_');result.replace("=","");return result;
 }
 void browserStart(const String &input,JsonDocument &report) {
+    auto& flow=browserFlows[wifiJobActive];
     JsonDocument args;if(deserializeJson(args,input)||!args["slot"].is<int>()||args["slot"].as<int>()<0||args["slot"].as<int>()>1||(String(args["expected"]|"").length()!=0&&String(args["expected"]|"").length()!=36)){report["error"]="invalid_login_input";return;}
-    uint8_t random[32],digest[32];esp_fill_random(random,sizeof(random));browserVerifier=base64url(random,sizeof(random));
-    esp_fill_random(random,sizeof(random));browserState=base64url(random,sizeof(random));
-    mbedtls_sha256_ret((const unsigned char*)browserVerifier.c_str(),browserVerifier.length(),digest,0);
-    browserExpected=args["expected"]|"";browserSlot=args["slot"];browserStarted=millis();
+    flow=BrowserFlow{};
     JsonDocument prior;
-    if(loadSession(browserSlot,prior)) {
+    flow.expected=args["expected"]|"";
+    int slot=args["slot"];
+    if(loadSession(slot,prior)) {
         String paired=prior["account"]|"";
-        if(browserExpected.length() && paired!=browserExpected) {
-            browserSlot=-1;browserVerifier="";browserState="";
+        if((wifiJobActive&&paired.length()!=36)||(flow.expected.length()&&paired!=flow.expected)){
             report["error"]="existing_account_mismatch";return;
         }
-        browserExpected=paired;
+        flow.expected=paired;
+    }else if(wifiJobActive){
+        report["error"]="initial_pairing_requires_usb";return;
     }
+    uint8_t random[32],digest[32];esp_fill_random(random,sizeof(random));flow.verifier=base64url(random,sizeof(random));
+    esp_fill_random(random,sizeof(random));flow.state=base64url(random,sizeof(random));
+    mbedtls_sha256_ret((const unsigned char*)flow.verifier.c_str(),flow.verifier.length(),digest,0);
+    flow.slot=slot;flow.started=millis();
     String url="https://auth.openai.com/oauth/authorize?response_type=code&client_id="+encode(CLIENT_ID)+
       "&redirect_uri="+encode("http://127.0.0.1:1455/auth/callback")+"&scope="+encode("openid profile email offline_access")+
-      "&code_challenge="+base64url(digest,sizeof(digest))+"&code_challenge_method=S256&state="+browserState+
+      "&code_challenge="+base64url(digest,sizeof(digest))+"&code_challenge_method=S256&state="+flow.state+
       "&id_token_add_organizations=true&codex_cli_simplified_flow=true&originator=codex_cli_rs";
-    report["authorizationUrl"]=url;report["stateToken"]=browserState;report["slot"]=browserSlot;
+    report["authorizationUrl"]=url;report["stateToken"]=flow.state;report["slot"]=flow.slot;
     report["browserPending"]=true;
 }
 void browserComplete(const String &input,JsonDocument &report) {
+    auto& flow=browserFlows[wifiJobActive];
     JsonDocument args;
-    if(deserializeJson(args,input)||browserSlot<0||millis()-browserStarted>900000||args["state"].as<String>()!=browserState||!args["code"].is<const char*>()){report["error"]="invalid_or_expired_browser_callback";return;}
+    if(deserializeJson(args,input)||flow.slot<0||millis()-flow.started>900000||args["state"].as<String>()!=flow.state||!args["code"].is<const char*>()){report["error"]="invalid_or_expired_browser_callback";return;}
     String encoded="grant_type=authorization_code&client_id="+encode(CLIENT_ID)+"&code="+encode(args["code"].as<String>())+
-        "&redirect_uri="+encode("http://127.0.0.1:1455/auth/callback")+"&code_verifier="+encode(browserVerifier);
-    int slot=browserSlot;String expected=browserExpected;browserSlot=-1;browserVerifier="";browserState="";
+        "&redirect_uri="+encode("http://127.0.0.1:1455/auth/callback")+"&code_verifier="+encode(flow.verifier);
+    int slot=flow.slot;String expected=flow.expected;flow=BrowserFlow{};
+    if(wifiJobActive){
+        JsonDocument prior;
+        if(!loadSession(slot,prior)||prior["account"].as<String>()!=expected){report["error"]="existing_account_mismatch";return;}
+    }
     String body;JsonArray requests=report["requests"].as<JsonArray>();JsonObject exchange=requests.add<JsonObject>();
     request("browser-code-exchange","https://auth.openai.com/oauth/token",encoded,"","",exchange,&body,true);
     JsonDocument session;
@@ -173,7 +211,9 @@ void browserComplete(const String &input,JsonDocument &report) {
     if(!saveSession(slot,session)){report["error"]="session_storage_failed";return;}
     cached[slot].clear();nextPoll=millis();consecutiveFailures=0;
     report["account"]=session["account"];
-    report["slot"]=slot;report["authenticated"]=true;report["persisted"]=true;report["expires"]=session["expires"];accountReads(session,requests);
+    report["slot"]=slot;report["authenticated"]=true;report["persisted"]=true;report["expires"]=session["expires"];
+    if(wifiJobActive)report["polls"]=pollCount;
+    else accountReads(session,requests);
 }
 void login(const String &input,JsonDocument &report) {
     JsonDocument args;
@@ -341,7 +381,7 @@ void pollAccounts(){
         JsonArray requests=summary["requests"].to<JsonArray>();
         for(JsonObject r:report["requests"].as<JsonArray>()){
             auto item=requests.add<JsonObject>();
-            for(const char* key:{"endpoint","http","elapsedMs","tlsError","tlsMessage","httpError","retryAfter","verificationFlags","bodyReadError"})if(!r[key].isNull())item[key]=r[key];
+            for(const char* key:{"endpoint","http","elapsedMs","tlsError","tlsMessage","httpError","retryAfter","verificationFlags","bodyReadError","firstError"})if(!r[key].isNull())item[key]=r[key];
         }
     }
     wifiUpdateAccountHealth(all);
@@ -373,6 +413,8 @@ void worker(void*) {
             if(enabled&&(int32_t)(millis()-nextPoll)>=0){nextPoll=millis()+30000;pollAccounts();}
             continue;
         }
+        wifiJobActive=command->startsWith("WIFI ");
+        if(wifiJobActive)command->remove(0,5);
         inCommand=true;cancelled=false;JsonDocument report;report["state"]="running";publish(report);
         bool local=command->startsWith("FORGET ")||*command=="RECONNECT";
         if(!local&&WiFi.status()!=WL_CONNECTED){report["state"]="wifi_unavailable";publish(report);inCommand=false;delete command;continue;}
@@ -468,6 +510,36 @@ void nativeClientBegin() {
     xTaskCreatePinnedToCore(worker,"native-test",16384,nullptr,1,nullptr,0);
 }
 bool nativeEnabled(){return enabled;}
+String nativeWifiReauth(const String &body){
+    JsonDocument input,params;
+    if(deserializeJson(input,body))return "{\"error\":\"invalid_request\"}";
+    String id=input["id"]|"",action=input["action"]|"",command;
+    if(id.length()!=32 || id.length()!=strspn(id.c_str(),"0123456789abcdef"))return "{\"error\":\"invalid_request\"}";
+    if(action=="start"&&input["slot"].is<int>()){
+        command="WIFI BROWSER ";params["slot"]=input["slot"];
+    }else if(action=="finish"){
+        String code=input["code"]|"",state=input["state"]|"";
+        if(code.length()==0||code.length()>1024||state.length()!=43)return "{\"error\":\"invalid_request\"}";
+        command="WIFI CALLBACK ";params["code"]=code;params["state"]=state;
+    }else if(action!="result")return "{\"error\":\"invalid_request\"}";
+    if(command.length()){
+        String payload;serializeJson(params,payload);command+=payload;
+    }
+    xSemaphoreTake(lock,portMAX_DELAY);
+    String response;
+    if(action=="result")response=id==wifiRequestId?wifiResult:"{\"error\":\"unknown_request\"}";
+    else if(!enabled)response="{\"error\":\"initial_pairing_requires_usb\"}";
+    else if(wifiJobPending)response="{\"error\":\"account_request_busy\"}";
+    else{
+        String* job=new String(command);
+        if(xQueueSend(jobs,&job,0)==pdTRUE){
+            wifiRequestId=id;wifiJobPending=true;
+            wifiResult="{\"state\":\"queued\"}";response=wifiResult;
+        }else{delete job;response="{\"error\":\"account_request_busy\"}";}
+    }
+    xSemaphoreGive(lock);
+    return response;
+}
 String nativeClientCommand(const String &command) {
     if(command=="RESULT") {xSemaphoreTake(lock,portMAX_DELAY);String copy=commandResult;xSemaphoreGive(lock);return copy;}
     if(command=="STATUS") {xSemaphoreTake(lock,portMAX_DELAY);String copy=result;xSemaphoreGive(lock);return copy;}

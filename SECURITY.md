@@ -7,7 +7,7 @@ Report vulnerabilities privately through [GitHub private vulnerability reporting
 ## Threat model and limits
 
 - The ESP32 holds two independent OAuth sessions and a Wi-Fi password in **unencrypted flash**. Physical/USB access or a firmware compromise can expose them. This alpha does not enable secure boot or flash encryption.
-- USB setup is a trusted administrative interface. Anyone with access can read diagnostics and modify configuration. The opt-in Wi-Fi update service exposes authenticated status and signed firmware upload over certificate-pinned HTTPS on port 8443. Configuration remains USB-only; there is no runtime host bridge.
+- USB setup is a trusted administrative interface. The opt-in Wi-Fi service provides authenticated status, reauthorization of already paired accounts and signed firmware upload over certificate-pinned HTTPS on port 8443. Initial provisioning and account replacement use USB. A device profile grants access to these LAN operations and should be kept private.
 - HTTPS verifies certificates and hostnames. A fresh clock sync after every boot and maintenance of the bundled Mozilla/certifi trust store are required. Do not disable verification to work around network failures.
 - The host's browser performs initial authentication; PKCE/state protect the code exchange. The loopback receiver binds only 127.0.0.1, checks Host and state, and does not log callback URLs. A trusted setup computer is still necessary.
 - Pending refresh state is committed before rotation. An uncertain rotation requires fresh login. A failure proven to occur before HTTP transmission can retry after clearing and verifying the pending marker. Token values are not intentionally returned in diagnostic reports, but treat all account diagnostics as private.

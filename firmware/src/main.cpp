@@ -168,7 +168,7 @@ void drawDetails(JsonVariant a,int64_t now,bool connected) {
     if(unavailable)range="WAITING FOR FRESH DATA";
     text("RANGE",20,194,MUTED);right(range,298,194,MUTED);
     String note=unavailable?(a["error"].isNull()?"STALE - RECONNECTING":a["error"].as<String>()):f["resetPossible"]==true?"RESET MAY ARRIVE BEFORE EXHAUSTION":f["rate"].isNull()?"LEARNING FROM MEASURED QUOTA USE":String(f["confidence"]|"LOW")+" CONF / "+String(f["rate"].as<double>(),1)+"%/H / "+durationText(f["coverageSeconds"]|0)+" DATA";
-    if(a["reauthRequired"]==true)note="CONNECT USB / RUN QUOTAPANEL.PY REAUTH";
+    if(a["reauthRequired"]==true)note="RUN WI-FI REAUTH FROM SETUP TOOL";
     if(!unavailable&&f["historical"]==true)note="PAST PACE / LOW CONF / "+durationText(f["historyAgeSeconds"]|0)+" OLD";
     if(w["historyHealthy"]==false)note="HISTORY NOT SAVED / CHECK DEVICE";
     text(note,12,222,unavailable||w["historyHealthy"]==false?AMBER:MUTED);
@@ -280,7 +280,7 @@ void draw() {
             String age=updated>0?String((long)(now-updated))+"s":"--";
             if((int32_t)(bannerUntil-millis())>0)text(alertBanner,12,232,MINT);
             else if(doc["accounts"][0]["reauthRequired"]==true||doc["accounts"][1]["reauthRequired"]==true){
-                text("SIGN IN VIA USB: QUOTAPANEL.PY REAUTH",12,232,AMBER);
+                text("SIGN IN AGAIN / WI-FI SETUP TOOL",12,232,AMBER);
             }else if(!doc["retryAt"].isNull()){
                 text("RETRY IN "+String((long)max(0LL,doc["retryAt"].as<int64_t>()-now))+"s",12,232,AMBER);
                 right("TAP FOR DETAILS",308,232,MUTED);

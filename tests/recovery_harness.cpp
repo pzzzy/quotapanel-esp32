@@ -12,6 +12,9 @@ int main(){
     assert(compare({2024,2,29,0,0,0},{2024,3,1,0,0,0})<0);
     assert(compare({2027,1,1,0,0,0},{2026,12,31,23,59,59})>0);
     for(int code=-20;code<=599;code++)assert(refreshDefinitelyUnsent(code)==(code==-1));
+    for(int code=-20;code<=599;code++)assert(retryQuotaRead(code,0)==(code==-1||code==-5||code==-11));
+    assert(!retryQuotaRead(-1,-0x2700));
+    assert(!retryQuotaRead(-1,-0x3000));
     assert(!refreshDue(1000,1301,0));
     assert(refreshDue(1000,1300,0));
     assert(!refreshDue(1000,999,1001));

@@ -16,6 +16,9 @@ inline int certificateTime(Calendar first,Calendar last,Calendar now){
 // Arduino HTTPClient returns -1 only when connect() failed, before sending
 // headers or a body. All other failed refresh outcomes remain ambiguous.
 inline bool refreshDefinitelyUnsent(int http) { return http == -1; }
+inline bool retryQuotaRead(int http,int tls) {
+    return tls!=-0x2700 && tls!=-0x3000 && (http==-1 || http==-5 || http==-11);
+}
 inline bool refreshDue(int64_t now,int64_t expires,int64_t earliest){
     return now>=earliest&&expires<=now+300;
 }

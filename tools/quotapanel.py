@@ -129,7 +129,7 @@ def validate_network(ssid, password, timezone):
     return {"ssid": ssid, "password": password, "timezone": timezone}
 
 
-def pair(port, slot, no_browser, expected):
+def browser_login(slot, no_browser, start, finish):
     callback = {}
     state = ""
     label = ("PRIMARY", "SECONDARY")[slot]
@@ -193,10 +193,7 @@ def pair(port, slot, no_browser, expected):
         ) from exc
     server.timeout = 1
     try:
-        with Device(port) as device:
-            request = device.native(
-                "BROWSER " + json.dumps({"slot": slot, "expected": expected or ""})
-            )
+        request = start()
         state = request["stateToken"]
         url = request["authorizationUrl"]
         parsed = urlsplit(url)
@@ -221,23 +218,35 @@ def pair(port, slot, no_browser, expected):
         server.server_close()
     if callback.get("error"):
         raise RuntimeError(callback["error"])
-    with Device(port) as device:
-        try:
-            result = device.native("CALLBACK " + json.dumps(callback))
-        except RuntimeError as exc:
-            if str(exc) in (
-                "exchange_or_account_mismatch",
-                "account_already_paired_in_other_slot",
-            ):
-                raise RuntimeError(
-                    f"{label} was not changed. Check the signed-in account and retry from its browser profile or a private window."
-                ) from exc
-            raise
+    try:
+        result = finish(callback)
+    except RuntimeError as exc:
+        if str(exc) in (
+            "exchange_or_account_mismatch",
+            "account_already_paired_in_other_slot",
+        ):
+            raise RuntimeError(
+                f"{label} was not changed. Choose that account in your browser and retry."
+            ) from exc
+        raise
     callback.clear()
     if not result.get("persisted"):
         raise RuntimeError(f"{label} sign-in was not saved")
     print(f"{label} sign-in saved on the ESP32.", flush=True)
     return result
+
+
+def pair(port, slot, no_browser, expected):
+    def invoke(command, payload):
+        with Device(port) as device:
+            return device.native(command + json.dumps(payload))
+
+    return browser_login(
+        slot,
+        no_browser,
+        lambda: invoke("BROWSER ", {"slot": slot, "expected": expected or ""}),
+        lambda callback: invoke("CALLBACK ", callback),
+    )
 
 
 def account_targets(connection):
